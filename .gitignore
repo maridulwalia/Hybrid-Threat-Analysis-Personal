@@ -1,0 +1,59 @@
+# === Python ===
+venv/
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# === Environment ===
+.env
+*.env.local
+
+# === Node / Next.js ===
+node_modules/
+.next/
+out/
+dist/
+
+# === Large dataset files — NEVER commit these ===
+*.csv
+MachineLearningCSV/
+MachineLearningCSV.zip
+
+# === Saved models & evaluation artifacts — versioned on disk, not in git ===
+models/*
+!models/.gitkeep
+artifacts/*
+!artifacts/.gitkeep
+
+# === Jupyter ===
+.ipynb_checkpoints/
+
+# === OS ===
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# === IDEs ===
+.vscode/settings.json
+.idea/
+*.swp
+*.swo
+
+# === One-time team reference files ===
+*.docx
+*.pdf
+*.png
+*.jpeg
+*.jpg
+*.pptx
+*.zip
+*.doc
+*.jpeg
+*.jpg
+*.pptx

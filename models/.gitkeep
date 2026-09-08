@@ -1,0 +1,9 @@
+# models/ — Saved model artifacts
+#
+# All model files are git-ignored. Use versioned filenames only — never overwrite.
+#
+# Naming convention:
+#   <model>_<descriptor>_v<N>.<ext>
+#   e.g.  rf_baseline_v1.pkl
+#         xgb_baseline_v1.json
+#         rf_baseline_v1_metrics.json

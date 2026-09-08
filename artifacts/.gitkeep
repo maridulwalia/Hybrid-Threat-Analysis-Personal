@@ -1,0 +1,9 @@
+# artifacts/ — Evaluation outputs, metric reports, SHAP plots, split files
+#
+# All generated artifacts are git-ignored. Use versioned filenames only.
+#
+# Subdirectory layout (created at runtime):
+#   artifacts/
+#   ├── splits/       — train/test split CSVs/parquets (Phase 3)
+#   ├── chroma_db/    — Chroma vector DB persistence (Phase 10)
+#   └── *.json        — metric reports (Phases 4–9)

@@ -1,0 +1,20 @@
+# Verified Python 3.14 compatible versions (confirmed 2026-08-29; lightgbm added 2026-09-07).
+# All packages below have pre-built cp314 wheels — no C compiler required.
+fastapi==0.141.1
+uvicorn[standard]==0.52.4
+pandas==3.0.5
+numpy==2.5.2
+scikit-learn==1.9.0
+lightgbm==4.7.0                # RF baseline (boosting_type='rf'); cp314 wheel confirmed (added 2026-09-07)
+xgboost==3.4.1
+shap==0.52.0
+sentence-transformers==3.3.*   # installed separately (pulls torch CPU-only)
+chromadb==0.6.*                # installed separately (Phase 10+)
+python-dotenv==1.2.3
+psutil==7.2.2
+
+# Install sentence-transformers with:
+# pip install --only-binary :all: sentence-transformers --extra-index-url https://download.pytorch.org/whl/cpu
+# Install chromadb with:
+# pip install --only-binary :all: chromadb
+
