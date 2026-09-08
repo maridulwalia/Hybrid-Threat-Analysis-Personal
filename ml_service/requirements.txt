@@ -1,4 +1,5 @@
-# Verified Python 3.14 compatible versions (confirmed 2026-08-29; lightgbm added 2026-09-07).
+# Verified Python 3.14 compatible versions (confirmed 2026-08-29; lightgbm added 2026-09-07;
+# pyarrow added 2026-09-08 — Parquet engine resolved; all packages have cp314 wheels).
 # All packages below have pre-built cp314 wheels — no C compiler required.
 fastapi==0.141.1
 uvicorn[standard]==0.52.4
@@ -8,6 +9,9 @@ scikit-learn==1.9.0
 lightgbm==4.7.0                # RF baseline (boosting_type='rf'); cp314 wheel confirmed (added 2026-09-07)
 xgboost==3.4.1
 shap==0.52.0
+pyarrow==25.0.1                # Parquet engine for Phase 3+ split artifacts; cp314-cp314-win_amd64 wheel
+                               # confirmed & installed 2026-09-08. Provides ParquetWriter for
+                               # incremental streaming writes in the 3-pass feature_engineer pipeline.
 sentence-transformers==3.3.*   # installed separately (pulls torch CPU-only)
 chromadb==0.6.*                # installed separately (Phase 10+)
 python-dotenv==1.2.3

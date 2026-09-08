@@ -37,12 +37,17 @@ dependencies from Phases 1–9 on Phases 10–11.
 
 **Do not introduce:** LLM fine-tuning, training a foundation model, local
 LLM as a hard requirement (Ollama optional only), FAISS instead of Chroma
-without discussion, real-time streaming infrastructure, or a second primary
-dataset without explicit approval. *(Evaluated 2026-09-06: Proposed multi-dataset
-expansion with CSE-CIC-IDS2018, UNSW-NB15, NSL-KDD, and CERT was audited and
-formally rejected for the active pipeline to preserve the ~8 GB RAM budget,
-avoid feature schema mismatch, and prevent scope paralysis; relegated strictly
-to Phase 14 extended evaluation / future work).*
+without discussion, real-time streaming infrastructure, River (online/incremental
+learning library — evaluated 2026-09-08 as a potential approach for Phase 14
+unsampled-stream training; rejected: introduces a new training paradigm, new
+dependency, and new evaluation methodology not required by the core research
+question, and Phase 14/CSE-CIC-IDS2018 work is itself deferred future work;
+do not install, implement, or reference River anywhere in the active pipeline),
+or a second primary dataset without explicit approval. *(Evaluated 2026-09-06:
+Proposed multi-dataset expansion with CSE-CIC-IDS2018, UNSW-NB15, NSL-KDD, and
+CERT was audited and formally rejected for the active pipeline to preserve the
+~8 GB RAM budget, avoid feature schema mismatch, and prevent scope paralysis;
+relegated strictly to Phase 14 extended evaluation / future work).*
 
 *(Evaluated 2026-09-07: RAM diagnostic (check_ram.py) showed loading the full
 cleaned dataset (2,520,798 × 79) into a pandas DataFrame consumes 1.778 GB RSS
@@ -61,6 +66,25 @@ feature_fraction=0.8, ...)`. `bagging_freq` must be ≥ 1 (enables row-level
 bagging) and both fractions must be strictly < 1.0. Without these, RF mode is
 not active regardless of `boosting_type`.*)
 
+*(Evaluated 2026-09-08: RAM diagnostic (check_ram.py, run 2026-09-06) confirmed
+the full cleaned dataset at float64 (2,520,798 rows × 79 cols) consumes 1.595 GB
+deep / 1.778 GB RSS delta against ~0.860 GB free RAM; Task Manager showed
+Available RAM spike to 28.8 MB during load. Six engineering decisions recorded:
+(1) RF implemented via LightGBM boosting_type='rf' — already recorded 2026-09-07,
+no change. (2) XGBoost tree_method='hist' — already recorded 2026-09-07, no change.
+(3) All ML feature columns cast to float32 (not float64) from Phase 3 onward;
+for this dataset's value ranges, float32's ~7 significant digits is sufficient
+and roughly halves in-memory size with no meaningful accuracy tradeoff for
+tree-based models. (4) Phase 3+ intermediate split artifacts written as Parquet
+(binary, column-oriented, 3–10× smaller than equivalent CSV with faster load
+times); Phase 2 cleaned CSVs in artifacts/cleaned/ are frozen and unaffected.
+(5) CSE-CIC-IDS2018 full-load evaluated on paper: at ~16.2M rows, estimated
+footprint is ~10.2 GB at float64 and ~5.1 GB at float32, both exceeding available
+RAM (~0.86–1.2 GB free at idle); confirmed that Phase 14, if ever undertaken,
+requires chunked streaming with class-stratified sampling to a bounded subset
+(e.g. ~500K–1M rows) before any in-memory training — never a full in-memory
+load at any precision. (6) River rejected — see "Do not introduce" above.)*
+
 ---
 
 ## Hardware Constraint
@@ -74,13 +98,26 @@ suggestion:
 - SHAP explanations are generated for a **representative sample**, never the
   full test set.
 - Avoid loading multiple full-size DataFrames simultaneously.
-- **Empirically confirmed unsafe (2026-09-07, check_ram.py):** loading the full
+- **Empirically confirmed unsafe (2026-09-06, check_ram.py):** loading the full
   cleaned dataset (2,520,798 rows × 79 columns) into a single pandas DataFrame
   consumed 1.595 GB (deep) / 1.778 GB RSS delta against ~0.860 GB free RAM;
-  system Available RAM spiked to 28.8 MB during load. Phases 3 and 4 must
-  **not** load the full cleaned dataset into a single DataFrame. Use chunked
-  reads and/or write intermediate feature data to disk (e.g. Parquet) and
-  load only what is needed at each step.
+  Task Manager confirmed Available RAM spiked to 28.8 MB during load, with a
+  sustained second-lowest point around 200 MB. Phases 3 and 4 must **not** load
+  the full cleaned dataset into a single DataFrame. Use chunked reads and/or
+  write intermediate feature data to disk and load only what is needed at each
+  step.
+- **float32 standard precision (Phase 3 onward):** All ML feature columns are
+  cast to float32 during Phase 3 feature engineering and all subsequent phases.
+  float32's ~7 significant digits is sufficient for this dataset's value ranges
+  (packet counts, byte counts, durations, rates) and roughly halves in-memory
+  size relative to float64, with no meaningful accuracy tradeoff for tree-based
+  models. This is a hard engineering constraint, not a suggestion.
+- **Parquet as standard format for Phase 3+ intermediate artifacts:** Phase 3
+  train/test split outputs (X_train, X_test, y_train, y_test) are written as
+  Parquet files. Parquet is binary, column-oriented, and typically 3–10× smaller
+  on disk than equivalent CSV, with faster load times and lower parsing overhead.
+  **The Phase 2 cleaned CSVs in `artifacts/cleaned/` are frozen and unaffected
+  — do not convert or replace them.**
 
 ---
 
@@ -258,6 +295,7 @@ scikit-learn==1.9.0
 lightgbm==4.7.0                # RF baseline via boosting_type='rf'; cp314 wheel confirmed (added 2026-09-07)
 xgboost==3.4.1
 shap==0.52.0
+pyarrow==25.0.1                # Parquet engine (Phase 3+); cp314-cp314-win_amd64 confirmed (added 2026-09-08)
 sentence-transformers==3.3.*   # pulls torch CPU-only
 chromadb==0.6.*
 python-dotenv==1.2.3
@@ -273,6 +311,12 @@ pip install --only-binary :all: -r ml_service/requirements.txt --extra-index-url
 > have no pre-built wheels for Python 3.14 and fail to compile from source without
 > Visual Studio. Bumped to the nearest versions that ship py3.14 wheels.
 > APIs are identical for the ML pipeline — no code changes required.
+
+> **Note (2026-09-08) — Parquet engine resolved:** `pyarrow==25.0.1` pinned.
+> Wheel `pyarrow-25.0.1-cp314-cp314-win_amd64.whl` confirmed on PyPI, installed
+> into `ml_service/venv`, and smoke-tested (`pyarrow.parquet.ParquetWriter`
+> available). FLAG comment removed from `requirements.txt`. Phase 3 implementation
+> may now begin — no outstanding prerequisite blockers remain.
 
 ---
 
@@ -300,8 +344,8 @@ pip install --only-binary :all: -r ml_service/requirements.txt --extra-index-url
 | 0 — Environment Setup | ✅ Completed | 2026-08-29 | Full scaffold verified: FastAPI, Express 5, Next.js 16 (Turbopack), Git initialized & initial commit |
 | 1 — Dataset Acquisition & Exploration | ✅ Completed | 2026-09-04 | 8 CSVs streamed (2,830,743 flows, 79 cols). Verified schema consistency, 128-bit hash duplicate tracking (308,381 duplicates / 10.89%), distinct NaN (+1,358 in Flow Bytes/s) & +inf (+2,867 in Flow Packets/s, +1,509 in Flow Bytes/s), 65 columns with whitespace defects, class distributions & encoding artifacts documented in `artifacts/eda_summary.json` & `.md`. |
 | 2 — Data Cleaning | ✅ Completed | 2026-09-05 | pipeline v2.0. Read 2,830,743 flows → removed 2,867 NaN/inf rows + 307,078 duplicates (255,236 within-file, 51,842 cross-file) → 2,520,798 clean unique flows written to `artifacts/cleaned/`. All 8 files passed independent zero-defect verification. Label normalizations: 2,180 Web Attack `\ufffd` labels corrected. Column schema: 76 ML features + 1 identifier (Destination Port) + 1 redundant (Fwd Header Length.1) + 1 target (Label) = 79. Peak RSS: 399.77 MB / 500 MB. SHA-256 source hashes prove raw CSVs unmodified. |
-| 3 — Feature Engineering & Split | ⬜ Not started | — | |
-| 4 — ML Baseline: Random Forest | ⬜ Not started | — | |
+| 3 — Feature Engineering & Split | ✅ Completed | 2026-09-08 | 3-pass streaming pipeline (feature_engineer.py v1.0). 2,520,798 rows → train=2,016,638 / test=504,160 (80/20 stratified on category label). 76 float32 features, Parquet/snappy. Peak RSS: 459.5 MB / 500 MB limit. Elapsed: 136.8 s. 11 artifacts in `artifacts/splits/`. `.env` path vars corrected to Personal workspace (root cause of initial wrong-path write). |
+| 4 — ML Baseline: Random Forest | ⬜ Not started | — | See Hardware Constraint & Technology Decisions updates 2026-09-08: LightGBM RF mode (boosting_type='rf'), explicit bagging params required. |
 | 5 — ML Comparison: XGBoost | ⬜ Not started | — | |
 | 6 — Explainability (SHAP) | ⬜ Not started | — | |
 | 7 — Security Rule Engine | ⬜ Not started | — | |

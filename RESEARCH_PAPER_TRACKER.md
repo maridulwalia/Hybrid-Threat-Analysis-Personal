@@ -405,6 +405,209 @@ These documented limitations and deferred experiments are academic strengths, no
 
 ---
 
+### 4.7 Hardware-Driven Implementation Decisions — RAM Diagnostic Findings (2026-09-08)
+
+**Decision Date:** 2026-09-08  
+**Decision Type:** Engineering Constraint — Hardware-Confirmed, Evidence-Based Implementation Changes  
+**Trigger:** RAM diagnostic (check_ram.py, run 2026-09-06) on the development machine (~8 GB total system RAM)  
+**Recorded By:** Research lead — retained permanently for methodology transparency and reproducibility
+
+> This section records three concrete implementation decisions that were forced by empirically measured memory constraints. In each case, the **algorithm or analytical choice is unchanged**; only the **software implementation mechanism** has been adjusted for hardware feasibility. These decisions must be documented in the paper's Implementation / Experimental Setup section to allow other researchers to reproduce results on memory-constrained hardware.
+
+---
+
+#### 4.7.1 Measured Memory Profile (Evidence Basis)
+
+The RAM diagnostic was run against the full Phase 2 cleaned dataset to confirm feasibility of in-memory training before beginning Phase 3:
+
+| Metric | Measured Value |
+|---|---|
+| Total system RAM | 7.71 GB |
+| Free RAM before load | ~0.860 GB |
+| pandas DataFrame memory (deep, float64) | 1.595 GB |
+| Process RSS delta during load | 1.778 GB |
+| Task Manager — Available RAM at load peak | 28.8 MB (spike) |
+| Task Manager — Sustained second-lowest point | ~200 MB |
+| Dataset dimensions | 2,520,798 rows × 79 columns |
+
+**Conclusion:** Loading the full cleaned dataset into a single pandas DataFrame and then passing it to a standard `sklearn.RandomForestClassifier.fit()` call is unsafe on this hardware. The OS reached near-total RAM exhaustion (28.8 MB Available) during the load alone, before any model training memory allocation. This rules out any library that requires the full feature matrix to reside in RAM simultaneously during training.
+
+---
+
+#### 4.7.2 Decision 1 — Random Forest Baseline: LightGBM Native RF Mode
+
+**Algorithm:** unchanged — Random Forest (bagged ensemble of decision trees, as per Breiman, 2001).  
+**Implementation:** changed — `lightgbm.LGBMClassifier(boosting_type='rf')` instead of `sklearn.RandomForestClassifier`.
+
+**Rationale:** LightGBM's native RF mode produces an equivalent bagged-tree ensemble via histogram-binned training (`tree_method='hist'` internally). Instead of loading the full-precision feature matrix into RAM at once, LightGBM discretizes continuous features into a fixed number of integer bins (default 255), reducing per-feature memory by approximately 8× compared to float64. The bagged ensemble property is preserved identically: each tree is trained on a random row-sample (controlled by `bagging_fraction`) and a random column-sample (controlled by `feature_fraction`).
+
+**Critical implementation note:** LightGBM RF mode requires explicit bagging parameters; without them, training silently falls back to gradient boosting regardless of `boosting_type='rf'`:
+```python
+lgb.LGBMClassifier(
+    boosting_type='rf',
+    bagging_fraction=0.8,   # row-level bootstrap sampling fraction (< 1.0)
+    bagging_freq=1,          # enable row-level bagging every tree (>= 1)
+    feature_fraction=0.8,    # column sampling fraction (< 1.0)
+)
+```
+
+**Paper reporting note:** The paper will clearly state that the Random Forest baseline uses LightGBM's native RF mode for memory-constrained reproducibility, and will cite LightGBM (Ke et al., 2017) alongside Breiman (2001). The mathematical formulation of the ensemble (Section 3.1) is identical — only the training implementation differs.
+
+---
+
+#### 4.7.3 Decision 2 — XGBoost Comparative Model: Histogram-Binned Training
+
+**Algorithm:** unchanged — XGBoost gradient-boosted trees (Chen & Guestrin, 2016).  
+**Implementation:** `xgboost.XGBClassifier(tree_method='hist')` — histogram-binned training instead of the default exact greedy split-finding method.
+
+**Rationale:** XGBoost's `tree_method='hist'` uses the same histogram discretization strategy as LightGBM, avoiding the need to hold the full sorted feature matrix in RAM during split finding. Memory footprint during training is comparable to LightGBM RF mode. This allows fair comparison between the two models on identical hardware without one model having an artificial advantage from a less memory-efficient training mode.
+
+**Sequencing constraint (unchanged from AGENTS.md):** XGBoost is trained **after** Random Forest is fully evaluated and explicitly released from memory. The two models are never resident in RAM simultaneously.
+
+**Paper reporting note:** The paper will note `tree_method='hist'` in the experimental setup table for reproducibility. This is a standard, documented XGBoost parameter — not an approximation — and does not affect the model's predictive output relative to the exact method for this dataset's value ranges.
+
+---
+
+#### 4.7.4 Decision 3 — Feature Precision and Intermediate File Format
+
+**Numeric precision:** All ML feature columns are stored and loaded as **float32** from Phase 3 onward (not the pandas/CSV default of float64).
+
+*Rationale:* For this dataset's value ranges (packet counts, byte counts in the thousands; durations in microseconds; rates per second), float32 provides ~7 significant digits of precision — sufficient for all 76 CICFlowMeter features. Halving numeric precision halves in-memory footprint of any loaded feature array, reducing the Phase 3 split artifacts from an estimated ~1.5 GB (float64) to ~750 MB (float32). For tree-based models, which split on feature inequalities rather than exact numeric gradients, there is no meaningful accuracy tradeoff.
+
+**Intermediate file format:** Phase 3 train/test split outputs (`X_train`, `X_test`, `y_train`, `y_test`) are written and read as **Parquet files** rather than CSV.
+
+*Rationale:* Parquet is a binary, column-oriented format that typically achieves 3–10× compression over equivalent CSV for numeric tabular data, with faster read times and lower parsing overhead (no CSV tokenization on load). For Phase 4 and Phase 5, loading only the required columns from a Parquet file without materializing the full matrix provides an additional memory-efficiency benefit over CSV, which always materializes all columns during parsing.
+
+**Scope boundary:** This decision applies **only to new Phase 3+ intermediate artifacts**. The Phase 2 cleaned CSVs in `artifacts/cleaned/` are the authoritative frozen baseline and are never converted, replaced, or re-encoded.
+
+**Paper reporting note:** The paper's Experimental Setup section will note float32 feature encoding and Parquet intermediate storage as reproducibility details, alongside the hardware profile and memory budgets.
+
+---
+
+### 4.8 Phase 3 Feature Engineering & Train/Test Split — Methodology & Empirical Results (Paper Section)
+
+**Pipeline Version:** `1.0` | **Timestamp (UTC):** `2026-09-08 09:12:48 UTC` | **Peak RSS:** `459.45 MB` / 500 MB limit | **Elapsed:** `136.76 s`
+
+#### 4.8.1 Pipeline Design (Memory-Constrained 3-Pass Streaming)
+
+To satisfy the confirmed RAM budget (~8 GB system, ~0.86 GB free at idle — see §4.7.1), Phase 3 was implemented as a three-pass streaming pipeline over the 8 cleaned CSVs. No full-dataset DataFrame is ever resident in RAM simultaneously.
+
+| Pass | Data Read | Operation | Peak RAM Contribution |
+|---|---|---|---|
+| **Pass 1** | `Label` column only (1 of 79) | Concatenate all labels into a single array; fit `LabelEncoder`; generate stratified 80/20 split mask; write `y_*` Parquet files | ~50 MB (label array for 2.52M rows) |
+| **Pass 2** | 76 ML feature columns only | `StandardScaler.partial_fit()` on train-masked chunks only (never test rows) | ~200 MB (one chunk at a time) |
+| **Pass 3** | 76 ML feature columns only | `scaler.transform()` chunk-by-chunk; write to `X_train` / `X_test` via `pyarrow.parquet.ParquetWriter` incrementally | ~300 MB (chunk + scaled output simultaneously) |
+
+**Chunk size:** 50,000 rows per iteration. **Total I/O passes:** 3 × 8 CSVs = 24 file reads.
+
+#### 4.8.2 Column Selection
+
+Of the 79 columns present in the Phase 2 cleaned CSVs, three were excluded from the ML feature matrix:
+
+| Column | Reason for Exclusion |
+|---|---|
+| `Destination Port` | Network identifier — retained for Phase 7 rule engine and Phase 8 correlation, but must not be memorised by the ML model as a proxy label |
+| `Fwd Header Length.1` | Exact duplicate of `Fwd Header Length` — carries zero marginal information |
+| `Label` | Target column |
+
+**Final ML feature count: 76** (all CICFlowMeter numeric flow attributes).
+
+#### 4.8.3 Label Encoding
+
+Two target representations are produced — binary for overall attack detection, category for multi-class attack classification:
+
+| Encoding | Scheme | Values |
+|---|---|---|
+| **Binary** | `0` = BENIGN, `1` = any attack | 2 classes |
+| **Category** | Integer index via `sklearn.LabelEncoder` | 15 classes (0–14), sorted alphabetically |
+
+**Category class mapping (integer → label):**
+
+| Int | Label | Int | Label |
+|---|---|---|---|
+| 0 | `BENIGN` | 8 | `Heartbleed` |
+| 1 | `Bot` | 9 | `Infiltration` |
+| 2 | `DDoS` | 10 | `PortScan` |
+| 3 | `DoS GoldenEye` | 11 | `SSH-Patator` |
+| 4 | `DoS Hulk` | 12 | `Web Attack - Brute Force` |
+| 5 | `DoS Slowhttptest` | 13 | `Web Attack - Sql Injection` |
+| 6 | `DoS slowloris` | 14 | `Web Attack - XSS` |
+| 7 | `FTP-Patator` | — | — |
+
+#### 4.8.4 Train/Test Split
+
+| Parameter | Value |
+|---|---|
+| Method | `sklearn.model_selection.train_test_split` |
+| Stratify on | Category label (15-class, finest grain) |
+| Test fraction | 0.20 (80/20) |
+| Random state | 42 (fixed seed — fully reproducible) |
+| All 15 categories present in both splits | ✅ Verified |
+
+| Split | Rows | % of 2,520,798 | Binary: BENIGN | Binary: ATTACK |
+|---|---|---|---|---|
+| **Train** | 2,016,638 | 80.0% | 1,676,045 | 340,593 |
+| **Test** | 504,160 | 20.0% | 419,012 | 85,148 |
+| **Total** | 2,520,798 | 100.0% | 2,095,057 | 425,741 |
+
+#### 4.8.5 Per-Class Distribution (Measured)
+
+| Attack Category | Train Count | Test Count | Train % | Test % |
+|---|---|---|---|---|
+| `BENIGN` | 1,676,045 | 419,012 | 83.115% | 83.115% |
+| `Bot` | 1,558 | 390 | 0.077% | 0.077% |
+| `DDoS` | 102,411 | 25,603 | 5.079% | 5.079% |
+| `DoS GoldenEye` | 8,229 | 2,057 | 0.408% | 0.408% |
+| `DoS Hulk` | 138,277 | 34,569 | 6.858% | 6.858% |
+| `DoS Slowhttptest` | 4,182 | 1,046 | 0.207% | 0.207% |
+| `DoS slowloris` | 4,308 | 1,077 | 0.214% | 0.214% |
+| `FTP-Patator` | 4,745 | 1,186 | 0.235% | 0.235% |
+| `Heartbleed` | 9 | 2 | 0.000% | 0.000% |
+| `Infiltration` | 29 | 7 | 0.001% | 0.001% |
+| `PortScan` | 72,555 | 18,139 | 3.598% | 3.599% |
+| `SSH-Patator` | 2,575 | 644 | 0.128% | 0.128% |
+| `Web Attack - Brute Force` | 1,176 | 294 | 0.058% | 0.058% |
+| `Web Attack - Sql Injection` | 17 | 4 | 0.001% | 0.001% |
+| `Web Attack - XSS` | 522 | 130 | 0.026% | 0.026% |
+
+> [!NOTE]
+> Train% and Test% are identical per class (to 3 decimal places) — confirming correct stratification. Heartbleed (train=9, test=2) and Infiltration (train=29, test=7) remain critically under-represented; per §4.6.5 this is acknowledged as a methodological constraint and documented honestly in the paper's Limitations section.
+
+#### 4.8.6 Feature Scaling
+
+- **Method:** `sklearn.preprocessing.StandardScaler` — zero-mean, unit-variance standardisation per feature.
+- **Fit discipline:** Scaler fitted **on training rows only** (Pass 2). Test rows are transformed with training statistics — no data leakage.
+- **Numeric format:** All features cast to `float32` before scaling; sklearn returns `float64` internally but the output is immediately cast back to `float32` before Parquet write (AGENTS.md §Hardware Constraint).
+- **Mean range across 76 features:** `[-35,647.09, 16,582,651.87]` — confirming that flow-rate features have very large absolute magnitudes and scaling is essential for any gradient-based method downstream.
+
+#### 4.8.7 Output Artifacts
+
+| Artifact | Size on Disk | Description |
+|---|---|---|
+| `X_train_v1.parquet` | 190.4 MB | 76 float32 scaled features — 2,016,638 train rows |
+| `X_test_v1.parquet` | 51.4 MB | 76 float32 scaled features — 504,160 test rows |
+| `y_train_binary_v1.parquet` | <1 MB | Binary label (0/1) — train |
+| `y_test_binary_v1.parquet` | <1 MB | Binary label (0/1) — test |
+| `y_train_category_v1.parquet` | <1 MB | Integer category label (0–14) — train |
+| `y_test_category_v1.parquet` | <1 MB | Integer category label (0–14) — test |
+| `label_encoder_v1.pkl` | <1 MB | Fitted `sklearn.LabelEncoder` — decodes int → class name |
+| `scaler_v1.pkl` | <1 MB | Fitted `StandardScaler` — train statistics only |
+| `is_train_mask_v1.npy` | 2.4 MB | Boolean array (N=2,520,798) — `True` = train row |
+| `split_summary_v1.json` | <1 MB | Full machine-readable pipeline summary |
+| `split_summary_v1.md` | <1 MB | Human-readable markdown report |
+
+**Storage efficiency:** Parquet/snappy achieves ~241.8 MB for the full 76-feature, 2.52M-row split vs. an estimated ~1.5 GB if stored as float64 CSV — a ~6× reduction.
+
+#### 4.8.8 Reproducibility Checklist
+
+To reproduce Phase 3 results exactly:
+1. Use Python 3.14.7, `scikit-learn==1.9.0`, `pyarrow==25.0.1`, `numpy==2.5.2`.
+2. Run `python -m ml_service.src.feature_engineer` from the project root with the `.env` vars pointing to the Personal workspace.
+3. `RANDOM_STATE=42` is the only stochastic input — all other operations are deterministic.
+4. The 8 Phase 2 cleaned CSVs in `artifacts/cleaned/` must be identical (SHA-256 verified in §4.5.6).
+
+---
+
 ## 5. Experimental Results & Benchmark Log
 
 *(To be populated as experimental evaluations complete across Phases 1–14)*
@@ -444,9 +647,10 @@ These documented limitations and deferred experiments are academic strengths, no
 
 1. Breiman, L. (2001). Random forests. *Machine Learning*, 45(1), 5–32. https://doi.org/10.1023/A:1010933404324
 2. Chen, T., & Guestrin, C. (2016). XGBoost: A scalable tree boosting system. *Proceedings of the 22nd ACM SIGKDD International Conference on Knowledge Discovery and Data Mining*, 785–794. https://doi.org/10.1145/2939672.2939785
-3. Lewis, P., Perez, E., Piktus, A., Petroni, F., Karpukhin, V., Goyal, N., Küttler, H., Lewis, M., Yih, W., Rocktäschel, T., Riedel, S., & Kiela, D. (2020). Retrieval-augmented generation for knowledge-intensive NLP tasks. *Advances in Neural Information Processing Systems*, 33, 9459–9474.
-4. Lundberg, S. M., & Lee, S.-I. (2017). A unified approach to interpreting model predictions. *Advances in Neural Information Processing Systems*, 30, 4765–4774.
-5. MITRE Corporation. (2024). *MITRE ATT&CK Enterprise Matrix*. https://attack.mitre.org
-6. National Institute of Standards and Technology. (2012). *Computer security incident handling guide* (NIST Special Publication 800-61 Rev. 2). U.S. Department of Commerce. https://doi.org/10.6028/NIST.SP.800-61r2
-7. Sharafaldin, I., Lashkari, A. H., & Ghorbani, A. A. (2018). Toward generating a new intrusion detection dataset and intrusion traffic characterization. *Proceedings of the 4th International Conference on Information Systems Security and Privacy (ICISSP)*, 108–116. https://doi.org/10.5220/0006639801080116
-8. Google. (2024). *Gemini API documentation & architectural guides*. Google DeepMind / Google AI for Developers. https://ai.google.dev/gemini-api/docs
+3. Ke, G., Meng, Q., Finley, T., Wang, T., Chen, W., Ma, W., Ye, Q., & Liu, T.-Y. (2017). LightGBM: A highly efficient gradient boosting decision tree. *Advances in Neural Information Processing Systems*, 30, 3146–3154. https://proceedings.neurips.cc/paper/2017/hash/6449f44a102fde848669bdd9eb6b76fa-Abstract.html
+4. Lewis, P., Perez, E., Piktus, A., Petroni, F., Karpukhin, V., Goyal, N., Küttler, H., Lewis, M., Yih, W., Rocktäschel, T., Riedel, S., & Kiela, D. (2020). Retrieval-augmented generation for knowledge-intensive NLP tasks. *Advances in Neural Information Processing Systems*, 33, 9459–9474.
+5. Lundberg, S. M., & Lee, S.-I. (2017). A unified approach to interpreting model predictions. *Advances in Neural Information Processing Systems*, 30, 4765–4774.
+6. MITRE Corporation. (2024). *MITRE ATT&CK Enterprise Matrix*. https://attack.mitre.org
+7. National Institute of Standards and Technology. (2012). *Computer security incident handling guide* (NIST Special Publication 800-61 Rev. 2). U.S. Department of Commerce. https://doi.org/10.6028/NIST.SP.800-61r2
+8. Sharafaldin, I., Lashkari, A. H., & Ghorbani, A. A. (2018). Toward generating a new intrusion detection dataset and intrusion traffic characterization. *Proceedings of the 4th International Conference on Information Systems Security and Privacy (ICISSP)*, 108–116. https://doi.org/10.5220/0006639801080116
+9. Google. (2024). *Gemini API documentation & architectural guides*. Google DeepMind / Google AI for Developers. https://ai.google.dev/gemini-api/docs

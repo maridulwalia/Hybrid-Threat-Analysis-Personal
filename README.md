@@ -105,6 +105,7 @@ npm run dev
 ├── .env.example          # Environment template (copy to .env)
 ├── .gitignore
 ├── README.md
+├── RESEARCH_PAPER_TRACKER.md   # Living methodology & results document
 ├── config/
 │   └── paths.py          # Canonical filesystem paths (imported by all Python modules)
 ├── ml_service/           # Python / FastAPI — ML, XAI, RAG
@@ -113,6 +114,7 @@ npm run dev
 │   ├── main.py
 │   └── src/
 │       ├── config.py
+│       ├── feature_engineer.py   # Phase 3 — 3-pass streaming split pipeline
 │       └── utils/
 │           └── memory_guard.py
 ├── backend/              # Node.js / Express — orchestration & persistence
@@ -123,6 +125,8 @@ npm run dev
 ├── frontend/             # Next.js 14 — analyst dashboard
 ├── models/               # Saved model files — git-ignored, versioned filenames
 ├── artifacts/            # Evaluation outputs — git-ignored
+│   ├── cleaned/          # Phase 2: 8 cleaned CSVs (2,520,798 flows)
+│   └── splits/           # Phase 3: X/y Parquet splits + scaler/encoder artifacts
 └── notebooks/            # Jupyter EDA notebooks
 ```
 
@@ -132,22 +136,22 @@ npm run dev
 
 | # | Phase | Status |
 |---|---|---|
-| 0 | Environment Setup | 🔄 In Progress |
-| 1 | Dataset Acquisition & Exploration | ⬜ |
-| 2 | Data Cleaning | ⬜ |
-| 3 | Feature Engineering & Train/Test Split | ⬜ |
-| 4 | ML Baseline: Random Forest | ⬜ |
-| 5 | ML Comparison: XGBoost | ⬜ |
-| 6 | Explainability (SHAP) | ⬜ |
-| 7 | Security Rule Engine | ⬜ |
-| 8 | Event Correlation | ⬜ |
-| 9 | Risk Scoring | ⬜ |
-| 10 | RAG Knowledge Base | ⬜ |
-| 11 | Gemini Integration | ⬜ |
-| 12 | Backend Integration | ⬜ |
-| 13 | Dashboard | ⬜ |
-| 14 | Testing & Evaluation | ⬜ |
-| 15 | Deployment & Documentation | ⬜ |
+| 0 | Environment Setup | ✅ Completed |
+| 1 | Dataset Acquisition & Exploration | ✅ Completed |
+| 2 | Data Cleaning | ✅ Completed |
+| 3 | Feature Engineering & Train/Test Split | ✅ Completed |
+| 4 | ML Baseline: Random Forest | ⬜ Not started |
+| 5 | ML Comparison: XGBoost | ⬜ Not started |
+| 6 | Explainability (SHAP) | ⬜ Not started |
+| 7 | Security Rule Engine | ⬜ Not started |
+| 8 | Event Correlation | ⬜ Not started |
+| 9 | Risk Scoring | ⬜ Not started |
+| 10 | RAG Knowledge Base | ⬜ Not started |
+| 11 | Gemini Integration | ⬜ Not started |
+| 12 | Backend Integration | ⬜ Not started |
+| 13 | Dashboard | ⬜ Not started |
+| 14 | Testing & Evaluation | ⬜ Not started |
+| 15 | Deployment & Documentation | ⬜ Not started |
 
 ---
 
@@ -157,12 +161,18 @@ Development machine: **~8 GB RAM**. All data loading uses chunked reads. Models 
 trained sequentially (RF → evaluate → save → free memory → XGBoost). Never load
 multiple full DataFrames simultaneously.
 
-**Empirically confirmed (2026-09-07):** loading the full cleaned dataset (2,520,798 rows)
-consumed 1.778 GB RSS against ~0.860 GB free RAM; system Available RAM spiked to 28.8 MB.
-Phases 3–4 must use chunked reads and/or intermediate Parquet files — never a single
-full-dataset DataFrame in memory. Random Forest is implemented via LightGBM
-(boosting_type='rf') for histogram-binned, memory-efficient training; XGBoost uses
-tree_method='hist' for the same reason.
+**Empirically confirmed (2026-09-06, check_ram.py):** loading the full cleaned dataset
+(2,520,798 rows × 79 columns, float64) consumed 1.595 GB deep / 1.778 GB RSS delta
+against ~0.860 GB free RAM; Task Manager confirmed Available RAM spiked to 28.8 MB.
+Phases 3+ use chunked Parquet reads and never hold a full-dataset DataFrame in memory.
+
+**Phase 3 measured results (2026-09-08):** 3-pass streaming pipeline processed 2,520,798
+rows across 8 CSVs. Train: 2,016,638 rows · Test: 504,160 rows (80/20 stratified,
+15 attack categories, seed=42). Peak RSS: 459.45 MB / 500 MB limit. Elapsed: 136.76 s.
+Outputs: 76-feature float32 Parquet files in `artifacts/splits/`.
+
+Random Forest is implemented via LightGBM (`boosting_type='rf'`) for histogram-binned,
+memory-efficient training; XGBoost uses `tree_method='hist'` for the same reason.
 
 ---
 

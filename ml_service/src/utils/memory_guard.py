@@ -75,7 +75,7 @@ def assert_memory_headroom(min_free_mb: int = _DEFAULT_MIN_FREE_MB) -> None:
 
 def safe_read_csv(
     path: str | Path,
-    usecols: Sequence[str] | None = None,
+    usecols: list[str] | None = None,
     chunksize: int = _DEFAULT_CHUNKSIZE,
     dtype: dict | None = None,
     collect: bool = True,

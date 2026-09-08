@@ -100,6 +100,21 @@ class Paths:
     # ── Cleaned dataset outputs (Phase 2+) ───────────────────────────────────
     CLEANED_DIR: Path = ARTIFACTS_DIR / "cleaned"
 
+    # Ordered list of all 8 cleaned CSV files — order is fixed and must match
+    # the iteration order used by Phase 2 (clean.py) and Phase 3 (feature_engineer.py).
+    # The is_train_mask produced in Phase 3 encodes row positions in this exact order.
+    # Never reorder this list without regenerating all Phase 3+ split artifacts.
+    CLEANED_CSVS: list[Path] = [
+        CLEANED_DIR / "Monday_cleaned.csv",
+        CLEANED_DIR / "Tuesday_cleaned.csv",
+        CLEANED_DIR / "Wednesday_workingHours_cleaned.csv",
+        CLEANED_DIR / "Thursday_Morning_WebAttacks_cleaned.csv",
+        CLEANED_DIR / "Thursday_Afternoon_Infilteration_cleaned.csv",
+        CLEANED_DIR / "Friday_Morning_cleaned.csv",
+        CLEANED_DIR / "Friday_Afternoon_PortScan_cleaned.csv",
+        CLEANED_DIR / "Friday_Afternoon_DDos_cleaned.csv",
+    ]
+
     @staticmethod
     def cleaned(filename: str) -> Path:
         """Return the full path for a cleaned daily CSV file.

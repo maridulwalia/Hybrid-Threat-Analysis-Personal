@@ -1,22 +1,14 @@
 {
+  "pythonVersion": "3.14",
+  "pythonPlatform": "Windows",
   "venvPath": "ml_service",
   "venv": "venv",
-  "executionEnvironments": [
-    {
-      "root": "ml_service",
-      "extraPaths": [
-        ".",
-        "..",
-        "src"
-      ]
-    },
-    {
-      "root": ".",
-      "extraPaths": [
-        ".",
-        "ml_service",
-        "ml_service/src"
-      ]
-    }
+  "useLibraryCodeForTypes": true,
+  "typeCheckingMode": "basic",
+  "extraPaths": [
+    ".",
+    "ml_service",
+    "ml_service/src",
+    "ml_service/venv/Lib/site-packages"
   ]
 }
