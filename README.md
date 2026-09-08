@@ -115,6 +115,7 @@ npm run dev
 │   └── src/
 │       ├── config.py
 │       ├── feature_engineer.py   # Phase 3 — 3-pass streaming split pipeline
+│       ├── train_rf.py           # Phase 4 — Random Forest baseline training & evaluation
 │       └── utils/
 │           └── memory_guard.py
 ├── backend/              # Node.js / Express — orchestration & persistence
@@ -123,11 +124,17 @@ npm run dev
 │       ├── index.js
 │       └── config.js
 ├── frontend/             # Next.js 14 — analyst dashboard
-├── models/               # Saved model files — git-ignored, versioned filenames
-├── artifacts/            # Evaluation outputs — git-ignored
+├── models/               # Saved model files — rf_baseline_category_v1.txt / .pkl
+├── artifacts/            # Evaluation outputs & metrics
 │   ├── cleaned/          # Phase 2: 8 cleaned CSVs (2,520,798 flows)
-│   └── splits/           # Phase 3: X/y Parquet splits + scaler/encoder artifacts
-└── notebooks/            # Jupyter EDA notebooks
+│   ├── splits/           # Phase 3: X/y Parquet splits + scaler/encoder artifacts
+│   ├── rf_metrics_v1.json# Phase 4: Machine-readable Random Forest evaluation metrics
+│   └── rf_metrics_v1.md  # Phase 4: Formatted Markdown evaluation report
+└── notebooks/            # Jupyter verification & analysis notebooks
+    ├── 01_eda_placeholder.ipynb
+    ├── 02_data_cleaning.ipynb
+    ├── 03_feature_engineering.ipynb
+    └── 04_random_forest_baseline.ipynb
 ```
 
 ---
@@ -140,7 +147,7 @@ npm run dev
 | 1 | Dataset Acquisition & Exploration | ✅ Completed |
 | 2 | Data Cleaning | ✅ Completed |
 | 3 | Feature Engineering & Train/Test Split | ✅ Completed |
-| 4 | ML Baseline: Random Forest | ⬜ Not started |
+| 4 | ML Baseline: Random Forest | ✅ Completed |
 | 5 | ML Comparison: XGBoost | ⬜ Not started |
 | 6 | Explainability (SHAP) | ⬜ Not started |
 | 7 | Security Rule Engine | ⬜ Not started |
@@ -170,6 +177,13 @@ Phases 3+ use chunked Parquet reads and never hold a full-dataset DataFrame in m
 rows across 8 CSVs. Train: 2,016,638 rows · Test: 504,160 rows (80/20 stratified,
 15 attack categories, seed=42). Peak RSS: 459.45 MB / 500 MB limit. Elapsed: 136.76 s.
 Outputs: 76-feature float32 Parquet files in `artifacts/splits/`.
+
+**Phase 4 measured results (2026-09-08):** Random Forest baseline (LightGBM native RF mode,
+100 trees, `bagging_fraction=0.8`, `bagging_freq=1`, `feature_fraction=0.8`, `class_weight=None`).
+Trained on 2,016,638 flows in 140.35 s; evaluated on 504,160 flows in 19.29 s (38.26 μs/sample).
+Multiclass Accuracy: 98.41% · Weighted F1: 0.9899 · Binary Attack Detection Rate (TPR): 99.94% (85,097/85,148 attacks caught) ·
+Binary FPR: 1.77% (7,402/419,012 benign alerts) · Binary F1: 0.9580 · ROC-AUC: 0.9917.
+Training peak resident RSS: 531.28 MB (well within budget). Saved to `models/` and `artifacts/`.
 
 Random Forest is implemented via LightGBM (`boosting_type='rf'`) for histogram-binned,
 memory-efficient training; XGBoost uses `tree_method='hist'` for the same reason.

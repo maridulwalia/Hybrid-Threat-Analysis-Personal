@@ -606,6 +606,54 @@ To reproduce Phase 3 results exactly:
 3. `RANDOM_STATE=42` is the only stochastic input — all other operations are deterministic.
 4. The 8 Phase 2 cleaned CSVs in `artifacts/cleaned/` must be identical (SHA-256 verified in §4.5.6).
 
+### 4.9 Phase 4 Random Forest Baseline — Methodology & Empirical Results (Paper Section)
+
+**Pipeline Version:** `1.0` | **Timestamp (UTC):** `2026-09-08 16:38:01 UTC` | **Split:** 80/20 Stratified (Train: 2,016,638 / Test: 504,160)  
+**Hardware Profile:** ~8 GB Total System RAM, ~1.15 GB Available at execution start | **Training Time:** `140.35 s` | **Inference Latency:** `38.26 μs/sample`
+
+#### 4.9.1 Model Architecture & Training Setup
+- **Algorithm:** Random Forest (bagged-tree ensemble) implemented via LightGBM native RF mode (`boosting_type='rf'`).
+- **Bagging Configuration:** `bagging_fraction=0.8` (row-level subsampling), `bagging_freq=1` (bagging active every tree), `feature_fraction=0.8` (column-level subsampling).
+- **Tree Depth & Leaves:** `n_estimators=100`, `num_leaves=63`, `max_depth=15`, `random_state=42`, `n_jobs=-1`.
+- **Weighting Strategy:** `class_weight=None` (unweighted baseline) — avoids the ~14,938× sample-weight distortion on 9-sample classes like Heartbleed while preserving honest minority detection statistics.
+- **Memory Discipline:** Direct histogram bin construction from streaming row-groups with `free_raw_data=True`. Raw float32 array de-allocated before tree fitting, yielding resident training RSS of `531.28 MB` and inference RSS of `579.88 MB`.
+
+#### 4.9.2 Binary Intrusion Detection Performance (Test Set N=504,160)
+- **Accuracy:** 98.522%
+- **Detection Rate (Recall / TPR):** 99.940% (85,097 of 85,148 attacks detected; only 51 missed)
+- **False Positive Rate (FPR):** 1.767% (7,402 benign flows flagged out of 419,012 benign test flows)
+- **Precision:** 91.998%
+- **F1-Score:** 0.95805
+- **ROC-AUC:** 0.99169
+- **Binary Confusion Matrix:** TN=411,610 | FP=7,402 | FN=51 | TP=85,097
+
+#### 4.9.3 Multi-Class 15-Category Breakdown (Measured)
+
+| Attack Category | Test Support | Precision | Recall | F1-Score | Evaluation Note |
+|---|---|---|---|---|---|
+| `BENIGN` | 419,012 | 0.9999 | 0.9823 | 0.9910 | High support baseline |
+| `Bot` | 390 | 0.1523 | 0.9846 | 0.2637 | High recall; low precision |
+| `DDoS` | 25,603 | 0.9982 | 0.9970 | 0.9976 | Near-perfect separation |
+| `DoS GoldenEye` | 2,057 | 0.9371 | 0.9771 | 0.9567 | Highly discriminative |
+| `DoS Hulk` | 34,569 | 0.9965 | 0.9921 | 0.9943 | Near-perfect separation |
+| `DoS Slowhttptest` | 1,046 | 0.8783 | 0.9933 | 0.9323 | Robust classification |
+| `DoS slowloris` | 1,077 | 0.8767 | 0.9768 | 0.9240 | Robust classification |
+| `FTP-Patator` | 1,186 | 0.9412 | 0.9983 | 0.9689 | Tuesday brute-force ground truth |
+| `Heartbleed` | 2 | 0.0133 | 0.5000 | 0.0260 | ⚠️ Low Support (N=2, 1/2 detected) |
+| `Infiltration` | 7 | 0.0027 | 0.7143 | 0.0054 | ⚠️ Low Support (N=7, 5/7 detected) |
+| `PortScan` | 18,139 | 0.9882 | 0.9983 | 0.9932 | High volume scan detection |
+| `SSH-Patator` | 644 | 0.6986 | 0.9969 | 0.8215 | Tuesday brute-force ground truth |
+| `Web Attack - Brute Force` | 294 | 0.3101 | 0.5612 | 0.3995 | Thursday web attack |
+| `Web Attack - Sql Injection` | 4 | 0.0020 | 1.0000 | 0.0039 | ⚠️ Low Support (N=4, 4/4 detected) |
+| `Web Attack - XSS` | 130 | 0.1967 | 0.7308 | 0.3100 | Thursday web attack |
+
+**Global Multi-Class Summary:**
+- Overall Accuracy: 98.406%
+- Balanced Accuracy: 89.354%
+- Weighted F1-Score: 0.98988
+- Macro F1-Score: 0.63921 (depressed by N<=7 rare classes)
+- Multi-Class ROC-AUC (OVR Weighted): 0.99210
+
 ---
 
 ## 5. Experimental Results & Benchmark Log
@@ -615,7 +663,7 @@ To reproduce Phase 3 results exactly:
 ### 5.1 Model Performance Comparison (Phase 4 vs Phase 5)
 | Model | Accuracy (%) | Precision (%) | Recall (%) | F1-Score | ROC-AUC | FPR (%) | Train Time (s) | Inference Latency (ms/flow) | RAM Peak (MB) |
 |---|---|---|---|---|---|---|---|---|---|
-| **Random Forest (Baseline)** | *Pending* | *Pending* | *Pending* | *Pending* | *Pending* | *Pending* | *Pending* | *Pending* | *Pending* |
+| **Random Forest (Baseline)** | 98.52% (bin) / 98.41% (mc) | 92.00% (bin) / 98.99% (wgt) | 99.94% (bin) / 89.35% (bal) | 0.9581 (bin) / 0.9899 (wgt) | 0.9917 (bin) / 0.9921 (ovr) | 1.77% | 140.35 s | 0.038 ms | 579.88 MB (fit: 531.28) |
 | **XGBoost (Comparative)** | *Pending* | *Pending* | *Pending* | *Pending* | *Pending* | *Pending* | *Pending* | *Pending* | *Pending* |
 
 ### 5.2 XAI (SHAP) Top Feature Attribution (Phase 6)
