@@ -116,6 +116,7 @@ npm run dev
 │       ├── config.py
 │       ├── feature_engineer.py   # Phase 3 — 3-pass streaming split pipeline
 │       ├── train_rf.py           # Phase 4 — Random Forest baseline training & evaluation
+│       ├── train_xgb.py          # Phase 5 — XGBoost comparative model training & evaluation
 │       └── utils/
 │           └── memory_guard.py
 ├── backend/              # Node.js / Express — orchestration & persistence
@@ -124,17 +125,21 @@ npm run dev
 │       ├── index.js
 │       └── config.js
 ├── frontend/             # Next.js 14 — analyst dashboard
-├── models/               # Saved model files — rf_baseline_category_v1.txt / .pkl
+├── models/               # Saved model files — rf_baseline_category_v1.*, xgb_baseline_category_v1.*
 ├── artifacts/            # Evaluation outputs & metrics
 │   ├── cleaned/          # Phase 2: 8 cleaned CSVs (2,520,798 flows)
 │   ├── splits/           # Phase 3: X/y Parquet splits + scaler/encoder artifacts
 │   ├── rf_metrics_v1.json# Phase 4: Machine-readable Random Forest evaluation metrics
-│   └── rf_metrics_v1.md  # Phase 4: Formatted Markdown evaluation report
+│   ├── rf_metrics_v1.md  # Phase 4: Formatted Markdown evaluation report
+│   ├── xgb_metrics_v1.json# Phase 5: Machine-readable XGBoost evaluation metrics
+│   ├── xgb_metrics_v1.md # Phase 5: Formatted Markdown evaluation report
+│   └── model_selection_decision_v1.md # Phase 5: Primary classifier selection audit
 └── notebooks/            # Jupyter verification & analysis notebooks
     ├── 01_eda_placeholder.ipynb
     ├── 02_data_cleaning.ipynb
     ├── 03_feature_engineering.ipynb
-    └── 04_random_forest_baseline.ipynb
+    ├── 04_random_forest_baseline.ipynb
+    └── 05_xgboost_comparison.ipynb
 ```
 
 ---
@@ -148,7 +153,7 @@ npm run dev
 | 2 | Data Cleaning | ✅ Completed |
 | 3 | Feature Engineering & Train/Test Split | ✅ Completed |
 | 4 | ML Baseline: Random Forest | ✅ Completed |
-| 5 | ML Comparison: XGBoost | ⬜ Not started |
+| 5 | ML Comparison: XGBoost | ✅ Completed |
 | 6 | Explainability (SHAP) | ⬜ Not started |
 | 7 | Security Rule Engine | ⬜ Not started |
 | 8 | Event Correlation | ⬜ Not started |
@@ -184,6 +189,15 @@ Trained on 2,016,638 flows in 140.35 s; evaluated on 504,160 flows in 19.29 s (3
 Multiclass Accuracy: 98.41% · Weighted F1: 0.9899 · Binary Attack Detection Rate (TPR): 99.94% (85,097/85,148 attacks caught) ·
 Binary FPR: 1.77% (7,402/419,012 benign alerts) · Binary F1: 0.9580 · ROC-AUC: 0.9917.
 Training peak resident RSS: 531.28 MB (well within budget). Saved to `models/` and `artifacts/`.
+
+**Phase 5 measured results (2026-09-10):** XGBoost comparative model (`tree_method='hist'`,
+200 trees, `max_depth=6`, `learning_rate=0.1`, `subsample=0.8`, `colsample_bytree=0.8`).
+Trained on 2,016,638 flows in 957.00 s; evaluated on 504,160 flows in 7.42 s (14.71 μs/sample, 2.6× faster than RF).
+Multiclass Accuracy: 99.86% · Weighted F1: 0.9985 · Macro F1: 0.8613 (+0.222 vs RF).
+Binary Attack Detection Rate (TPR): 99.80% (84,979/85,148 attacks caught) ·
+Binary FPR: 0.095% (399/419,012 benign false alerts — 18.5× lower false alarm rate than RF) ·
+Binary F1: 0.9967 · ROC-AUC: 0.9999. Training peak resident RSS: 136.6 MB.
+Formally selected as Primary Classifier for Phase 6 (SHAP) in `artifacts/model_selection_decision_v1.md`.
 
 Random Forest is implemented via LightGBM (`boosting_type='rf'`) for histogram-binned,
 memory-efficient training; XGBoost uses `tree_method='hist'` for the same reason.

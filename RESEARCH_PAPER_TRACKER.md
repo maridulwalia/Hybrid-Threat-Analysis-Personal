@@ -654,17 +654,75 @@ To reproduce Phase 3 results exactly:
 - Macro F1-Score: 0.63921 (depressed by N<=7 rare classes)
 - Multi-Class ROC-AUC (OVR Weighted): 0.99210
 
+
+### 4.10 Phase 5 XGBoost Comparative Model — Methodology & Empirical Results (Paper Section)
+
+**Pipeline Version:** `1.0` | **Timestamp (UTC):** `2026-09-10 18:38:44 UTC` | **Split:** 80/20 Stratified (Train: 2,016,638 / Test: 504,160)  
+**Hardware Profile:** ~8 GB Total System RAM, CPU-only execution | **Training Time:** `957.00 s` | **Inference Latency:** `14.71 μs/sample`
+
+#### 4.10.1 Model Architecture & Training Configuration
+- **Algorithm:** XGBoost gradient-boosted decision trees (`xgboost.Booster` via native `xgb.train` with `tree_method='hist'`).
+- **Boosting & Regularization Hyperparameters:** `n_estimators=200`, `max_depth=6`, `learning_rate=0.1`, `subsample=0.8` (row subsampling), `colsample_bytree=0.8` (column feature subsampling), `objective='multi:softprob'`, `eval_metric='mlogloss'`, `seed=42`, `device='cpu'`.
+- **Memory Discipline & Histogram Binning:** Dataset ingested directly into a histogram-binned `xgb.DMatrix` on CPU. Raw float32 numpy arrays de-allocated prior to tree fitting, releasing memory and resulting in post-fit resident RSS of `136.59 MB` and inference resident RSS of `378.82 MB`.
+
+#### 4.10.2 Binary Intrusion Detection Performance (Test Set N=504,160)
+- **Accuracy:** 99.887%
+- **Detection Rate (Recall / TPR):** 99.802% (84,979 of 85,148 attacks detected; 169 missed)
+- **False Positive Rate (FPR):** 0.0952% (399 benign flows flagged out of 419,012 benign test flows — **18.5× reduction in false positives vs. Random Forest**)
+- **Precision:** 99.533%
+- **F1-Score:** 0.99667
+- **ROC-AUC:** 0.99993
+- **Binary Confusion Matrix:** TN=418,613 | FP=399 | FN=169 | TP=84,979
+
+#### 4.10.3 Multi-Class 15-Category Breakdown (Measured)
+
+| Attack Category | Test Support | Precision | Recall | F1-Score | Evaluation Note |
+|---|---|---|---|---|---|
+| `BENIGN` | 419,012 | 0.9996 | 0.9991 | 0.9993 | High support baseline |
+| `Bot` | 390 | 0.8323 | 0.7128 | 0.7680 | Major improvement vs RF (+0.504 F1) |
+| `DDoS` | 25,603 | 1.0000 | 0.9999 | 0.9999 | Flawless separation |
+| `DoS GoldenEye` | 2,057 | 0.9966 | 0.9927 | 0.9946 | High precision & recall |
+| `DoS Hulk` | 34,569 | 0.9980 | 0.9995 | 0.9987 | Robust separation |
+| `DoS Slowhttptest` | 1,046 | 0.9412 | 0.9952 | 0.9675 | High discriminative power |
+| `DoS slowloris` | 1,077 | 0.9898 | 0.9898 | 0.9898 | High discriminative power |
+| `FTP-Patator` | 1,186 | 0.9983 | 0.9983 | 0.9983 | Tuesday brute-force ground truth |
+| `Heartbleed` | 2 | 1.0000 | 0.5000 | 0.6667 | ⚠️ Low Support (N=2, 1/2 detected) |
+| `Infiltration` | 7 | 1.0000 | 1.0000 | 1.0000 | ⚠️ Low Support (N=7, 7/7 detected) |
+| `PortScan` | 18,139 | 0.9886 | 0.9993 | 0.9939 | High volume scan detection |
+| `SSH-Patator` | 644 | 0.9984 | 0.9969 | 0.9977 | Tuesday brute-force ground truth |
+| `Web Attack - Brute Force` | 294 | 0.7328 | 0.8674 | 0.7944 | Thursday web attack (+0.395 F1 vs RF) |
+| `Web Attack - Sql Injection` | 4 | 1.0000 | 0.2500 | 0.4000 | ⚠️ Low Support (N=4, 1/4 detected) |
+| `Web Attack - XSS` | 130 | 0.5312 | 0.2615 | 0.3505 | Thursday web attack |
+
+**Global Multi-Class Summary:**
+- Overall Accuracy: 99.858%
+- Balanced Accuracy: 83.750%
+- Weighted F1-Score: 0.99854
+- Macro F1-Score: 0.86129 (**+0.22208 boost over Random Forest baseline**)
+- Multi-Class ROC-AUC (OVR Weighted): 0.99992
+
+### 4.11 Formal Model Selection Decision & Comparative Synthesis (Paper Section)
+
+```
+========================================================================================
+MODEL SELECTION VERDICT: XGBoost Selected as Primary Threat Classifier for Phase 6 (SHAP)
+========================================================================================
+```
+
+1. **Alert Fatigue Mitigation (Primary SOC Criterion):** XGBoost reduced False Positive Rate from `1.7665%` (RF) down to `0.0952%` — representing an **18.5× reduction** in false alerts (399 vs. 7,402). In an operational SOC processing 500,000 flows daily, this eliminates 7,003 false alarms without sacrificing detection efficacy.
+2. **Rare-Class Discernment:** Macro F1 increased from `0.63921` to `0.86129` (+0.22208). Critical improvements were achieved in Botnet ($F_1: 0.2637 \to 0.7680$), SSH-Patator ($F_1: 0.8215 \to 0.9977$), and Web Attack Brute Force ($F_1: 0.3995 \to 0.7944$).
+3. **Inference Latency Advantage:** XGBoost inference latency is `14.71 μs/sample` compared to RF's `38.26 μs/sample` (**2.6× faster throughput**).
+4. **Architectural Handoff:** `shap.TreeExplainer` in Phase 6 will be initialized on the selected `xgb_baseline_category_v1` model using stratified representative background samples.
+
 ---
 
 ## 5. Experimental Results & Benchmark Log
-
-*(To be populated as experimental evaluations complete across Phases 1–14)*
 
 ### 5.1 Model Performance Comparison (Phase 4 vs Phase 5)
 | Model | Accuracy (%) | Precision (%) | Recall (%) | F1-Score | ROC-AUC | FPR (%) | Train Time (s) | Inference Latency (ms/flow) | RAM Peak (MB) |
 |---|---|---|---|---|---|---|---|---|---|
 | **Random Forest (Baseline)** | 98.52% (bin) / 98.41% (mc) | 92.00% (bin) / 98.99% (wgt) | 99.94% (bin) / 89.35% (bal) | 0.9581 (bin) / 0.9899 (wgt) | 0.9917 (bin) / 0.9921 (ovr) | 1.77% | 140.35 s | 0.038 ms | 579.88 MB (fit: 531.28) |
-| **XGBoost (Comparative)** | *Pending* | *Pending* | *Pending* | *Pending* | *Pending* | *Pending* | *Pending* | *Pending* | *Pending* |
+| **XGBoost (Comparative / Selected)** | **99.89%** (bin) / **99.86%** (mc) | **99.53%** (bin) / **99.85%** (wgt) | **99.80%** (bin) / **83.75%** (bal) | **0.9967** (bin) / **0.9985** (wgt) | **0.9999** (bin) / **0.9999** (ovr) | **0.095%** | 957.00 s | **0.015 ms** | **378.82 MB** (fit: 136.59) |
 
 ### 5.2 XAI (SHAP) Top Feature Attribution (Phase 6)
 | Attack Category | Top 1 Discriminative Feature | Top 2 Discriminative Feature | Top 3 Discriminative Feature | Mean \|SHAP Value\| |
