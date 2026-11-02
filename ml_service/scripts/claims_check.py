@@ -372,6 +372,113 @@ def main() -> None:
     assert "0.97640" in report_v3_text, "Missing 0.97640 in report v3"
     record_assertion("Report v3 Key Numbers Parity", True, "All headline numbers present in risk_scoring_report_v3.md")
 
+    # =========================================================================
+    # Phase 10: RAG Knowledge Base Claims Verification
+    # =========================================================================
+    logger.info("\n--- Verifying Phase 10 Claims ---")
+    rag_dir = Paths.ARTIFACTS_DIR / "rag"
+
+    # 1. Queries and Partition Counts
+    queries_path = rag_dir / "rag_evaluation_queries_v1.json"
+    assert queries_path.exists(), f"Missing {queries_path}"
+    queries_data = json.loads(queries_path.read_text(encoding="utf-8"))["queries"]
+    check_approx(len(queries_data), 109, 0, "Phase 10 Total Queries")
+
+    split_counts = Counter(q["split"] for q in queries_data)
+    check_approx(split_counts["dev"], 40, 0, "Phase 10 Dev Queries")
+    check_approx(split_counts["test"], 54, 0, "Phase 10 Test Queries")
+    check_approx(split_counts["blind_reserved"], 15, 0, "Phase 10 Blind Reserved Queries")
+
+    dev_q = [q for q in queries_data if q["split"] == "dev"]
+    check_approx(sum(1 for q in dev_q if q["label"] != "BENIGN"), 26, 0, "Phase 10 Dev Threats")
+    check_approx(sum(1 for q in dev_q if q["label"] == "BENIGN"), 14, 0, "Phase 10 Dev Negatives")
+
+    test_q = [q for q in queries_data if q["split"] == "test"]
+    check_approx(sum(1 for q in test_q if q["label"] != "BENIGN"), 38, 0, "Phase 10 Test Threats")
+    check_approx(sum(1 for q in test_q if q["label"] == "BENIGN"), 16, 0, "Phase 10 Test Negatives")
+
+    test_types = Counter(q["type"] for q in test_q)
+    check_approx(test_types["schema"], 21, 0, "Phase 10 Test Schema Queries")
+    check_approx(test_types["observable"], 9, 0, "Phase 10 Test Observable Queries")
+    check_approx(test_types["wrong_label"], 6, 0, "Phase 10 Test Wrong Label Queries")
+    check_approx(test_types["r104_only"], 2, 0, "Phase 10 Test R104 Queries")
+
+    # 2. Chunk Grid Counts
+    c256_path = rag_dir / "chunks_c256_v1.json"
+    c512_path = rag_dir / "chunks_c512_v1.json"
+    c1024_path = rag_dir / "chunks_c1024_v1.json"
+    assert c256_path.exists() and c512_path.exists() and c1024_path.exists()
+    check_approx(len(json.loads(c256_path.read_text(encoding="utf-8"))["chunks"]), 2270, 0, "Chunks C256 Count")
+    check_approx(len(json.loads(c512_path.read_text(encoding="utf-8"))["chunks"]), 2060, 0, "Chunks C512 Count")
+    check_approx(len(json.loads(c1024_path.read_text(encoding="utf-8"))["chunks"]), 2029, 0, "Chunks C1024 Count")
+
+    # 3. Dev Tuning Results
+    dev_res_path = rag_dir / "dev_tuning_results_v1.json"
+    assert dev_res_path.exists(), f"Missing {dev_res_path}"
+    dev_res = json.loads(dev_res_path.read_text(encoding="utf-8"))
+    assert dev_res["selected_grid"] == "C512", f"Expected C512, got {dev_res['selected_grid']}"
+    check_approx(dev_res["grid_comparison"]["C512"]["mrr"], 0.3811, 1e-4, "Dev C512 MRR")
+    check_approx(dev_res["frozen_tau_star"], 0.35, 1e-2, "Dev Frozen Tau Star")
+    check_approx(dev_res["dev_optimal_metrics"]["f1"], 0.8197, 1e-4, "Dev Optimal F1")
+    check_approx(dev_res["dev_optimal_metrics"]["precision"], 0.7143, 1e-4, "Dev Optimal Precision")
+    check_approx(dev_res["dev_optimal_metrics"]["recall"], 0.9615, 1e-4, "Dev Optimal Recall")
+    check_approx(dev_res["dev_optimal_metrics"]["false_accept_rate"], 0.7143, 1e-4, "Dev Optimal FAR")
+
+    # 4. Test Split Evaluation Results
+    test_res_path = rag_dir / "test_evaluation_results_v1.json"
+    assert test_res_path.exists(), f"Missing {test_res_path}"
+    test_res = json.loads(test_res_path.read_text(encoding="utf-8"))
+    pm = test_res["primary_model_metrics"]
+    check_approx(pm["recall_at_1"], 0.3158, 1e-4, "Test Recall@1")
+    check_approx(pm["recall_at_1_ci95"][0], 0.1908, 1e-4, "Test Recall@1 CI Lower")
+    check_approx(pm["recall_at_1_ci95"][1], 0.4746, 1e-4, "Test Recall@1 CI Upper")
+    check_approx(pm["recall_at_3"], 0.5263, 1e-4, "Test Recall@3")
+    check_approx(pm["recall_at_3_ci95"][0], 0.3726, 1e-4, "Test Recall@3 CI Lower")
+    check_approx(pm["recall_at_3_ci95"][1], 0.6752, 1e-4, "Test Recall@3 CI Upper")
+    check_approx(pm["recall_at_5"], 0.6842, 1e-4, "Test Recall@5")
+    check_approx(pm["recall_at_5_ci95"][0], 0.5254, 1e-4, "Test Recall@5 CI Lower")
+    check_approx(pm["recall_at_5_ci95"][1], 0.8092, 1e-4, "Test Recall@5 CI Upper")
+    check_approx(pm["mrr"], 0.4478, 1e-4, "Test MRR")
+    check_approx(pm["macro_recall_at_1"], 0.3111, 1e-4, "Test Macro Recall@1")
+    check_approx(pm["macro_recall_at_3"], 0.5333, 1e-4, "Test Macro Recall@3")
+    check_approx(pm["macro_recall_at_5"], 0.7000, 1e-4, "Test Macro Recall@5")
+    check_approx(pm["macro_mrr"], 0.4502, 1e-4, "Test Macro MRR")
+    check_approx(pm["roc_auc_top1"], 0.7352, 1e-4, "Test Negative ROC-AUC")
+    check_approx(pm["false_accept_rate_at_tau"], 0.7500, 1e-4, "Test FAR at Tau*")
+
+    # 5. Baseline Comparison Numbers
+    b_rand = test_res["baselines"]["random_retrieval_100_trials"]
+    check_approx(b_rand["recall_at_1"], 0.0063, 1e-4, "Random Baseline Recall@1")
+    check_approx(b_rand["recall_at_3"], 0.0176, 1e-4, "Random Baseline Recall@3")
+    check_approx(b_rand["recall_at_5"], 0.0350, 1e-4, "Random Baseline Recall@5")
+    check_approx(b_rand["mrr"], 0.0147, 1e-4, "Random Baseline MRR")
+
+    # 6. Closure Analysis Numbers (v2)
+    closure_v2_path = rag_dir / "closure_analyses_v2.json"
+    assert closure_v2_path.exists(), f"Missing {closure_v2_path}"
+    cv2 = json.loads(closure_v2_path.read_text(encoding="utf-8"))
+    check_approx(cv2["task3_full_breakdown"]["breakdown_by_query_type"]["combined_wrong_and_r104_n8"]["r1_count"], 2, 0, "Wrong+R104 R@1 Count")
+    check_approx(cv2["task3_full_breakdown"]["breakdown_by_query_type"]["combined_wrong_and_r104_n8"]["r5_count"], 3, 0, "Wrong+R104 R@5 Count")
+    check_approx(cv2["task3_full_breakdown"]["distinct_primary_technique_macro_mrr"], 0.4993, 1e-4, "Distinct Primary Technique Macro MRR")
+    check_approx(cv2["task4_baselines"]["realistic_label_lookup"]["mrr"], 0.8421, 1e-4, "Realistic Label Lookup MRR")
+    check_approx(cv2["task6_mapped_retrieval_dev"]["mrr"], 0.9808, 1e-4, "Dev Mapped Retrieval MRR")
+
+    # 7. Text Parity with rag_evaluation_report_v2.md and RESEARCH_PAPER_TRACKER.md
+    report_v2_path = rag_dir / "rag_evaluation_report_v2.md"
+    assert report_v2_path.exists(), f"Missing {report_v2_path}"
+    rep_v2_txt = report_v2_path.read_text(encoding="utf-8")
+    assert "0.3158" in rep_v2_txt, "Missing 0.3158 in rag report v2"
+    assert "0.4478" in rep_v2_txt, "Missing 0.4478 in rag report v2"
+    assert "0.4993" in rep_v2_txt, "Missing 0.4993 in rag report v2"
+    assert "0.9808" in rep_v2_txt, "Missing 0.9808 in rag report v2"
+    record_assertion("Report v2 Key Numbers Parity", True, "All headline numbers present in rag_evaluation_report_v2.md")
+
+    tracker_path = _ROOT / "RESEARCH_PAPER_TRACKER.md"
+    tracker_txt = tracker_path.read_text(encoding="utf-8")
+    assert "0.3158" in tracker_txt, "Missing 0.3158 in tracker 5.5"
+    assert "0.4478" in tracker_txt, "Missing 0.4478 in tracker 5.5"
+    record_assertion("Tracker Section 5.5 Parity", True, "All headline numbers present in RESEARCH_PAPER_TRACKER.md")
+
     logger.info("\n" + "=" * 80)
     logger.info("ALL %d EMPIRICAL CLAIMS & TEXT-PARITY ASSERTIONS PASSED SUCCESSFULLY!", len(ASSERTION_LOG))
     logger.info("=" * 80)

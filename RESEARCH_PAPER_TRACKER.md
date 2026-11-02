@@ -1060,11 +1060,12 @@ The frozen winning configuration (C512, $\tau^* = 0.35$) was evaluated on the un
 #### 5.5.2 Comparative Baselines on Test Partition
 | Retrieval Approach | Recall@1 | Recall@3 | Recall@5 | MRR | Architectural Characteristics |
 |---|---|---|---|---|---|
-| **Semantic RAG (C512, all-MiniLM-L6-v2)** | **0.3158** | **0.5263** | **0.6842** | **0.4478** | Unsupervised semantic matching; generalizes to unlabeled observables (MRR=0.3926) |
-| **Naive Label Lookup** | 1.0000 | 1.0000 | 1.0000 | 1.0000 | Deterministic 1:1 dictionary lookup (requires exact ground-truth label; zero generalization) |
-| **Random Retrieval (100 trials)** | 0.0063 | 0.0176 | 0.0350 | 0.0147 | Empirical Monte Carlo null distribution across 2,060 chunks ($p < 0.0001$) |
+| **Semantic RAG (C512, all-MiniLM-L6-v2)** | **0.3158** | **0.5263** | **0.6842** | **0.4478** | Semantic matching over freeform queries; evaluated on observables (MRR=0.3926) |
+| **Realistic Label Lookup** | 0.8421 | 0.8421 | 0.8421 | 0.8421 | Fed predicted threat from telemetry; drops to 0.0% on misclassified threats |
+| **Accept-All Threshold Gate (Dev)** | 1.0000 | 1.0000 | 1.0000 | — | $\tau \le 0.20 \implies F_1=0.7879, \text{FAR}=1.0000$ |
+| **Random Retrieval (100 trials)** | 0.0063 | 0.0176 | 0.0350 | 0.0147 | Empirical Monte Carlo null distribution across 2,060 chunks |
 
-*Statistical Gain:* Semantic RAG achieves a **$30.5\times$ MRR gain** ($0.4478$ vs. $0.0147$) and a **$19.5\times$ Recall@5 gain** over the random null baseline.
+*Baseline Evaluation Note:* The earlier 1.0000 figure was an oracle evaluation using ground-truth labels and a gold set derived from the same mapping. Under realistic predicted telemetry, label lookup achieves 0.8421 MRR overall and 0.0% on misclassified queries. Over distinct primary techniques, semantic RAG achieves a Macro-MRR of 0.4993. Sequence truncation at 256 tokens in all-MiniLM-L6-v2 confounded the grid comparison (30.73% of C512 chunks exceeded 256 tokens). An exploratory mapped retrieval filter evaluated on Dev achieves MRR = 0.9808 (Recall@1 = 0.9615); test evaluation is held pending user-supplied queries.
 
 #### 5.5.3 Operational Query Formulation Performance
 - **Schema-Derived Telemetry Queries ($n=21$):** Recall@1 = 0.3810, Recall@3 = 0.5714, Recall@5 = 0.8095, MRR = 0.5230.

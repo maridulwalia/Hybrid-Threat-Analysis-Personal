@@ -1,0 +1,11 @@
+# Phase 10 RAG Tracked Provenance Hashes
+a87836067c83d865d7576c087daa46dc0e94092c91e296e2c51b0727b4f9a309    6799 bytes  artifacts/rag/preregistration_rag_v1.md
+72d0246f6e5348ffe8f94240726facc76ab12d1e5b126dc487df8bddfd2d19eb    32723 bytes  artifacts/rag/rag_evaluation_queries_v1.json
+2e00847e3327c6d940565295a843e54eef1f49b0bfedc4c354aecb2eb24ec15f    21891 bytes  artifacts/rag/label_technique_map_v1.json
+3eb2eba345a41da8a353176d95fb8fc40d1d51042d1f077b959e9bee287218ca    24662 bytes  artifacts/rag/label_technique_map_v2.json
+f2abfd870025ce2185eb3455a8accf035a3ba4e8d164b4878a507045915f68ed    6500 bytes  artifacts/rag/corpus_manifest_v1.json
+b41ff3803e1084e45d7d70f65c0bbf2f0e2e202798f0ee95e2bf5a4a2f95abc0    7588 bytes  artifacts/rag/corpus_manifest_v2.json
+13e50faf6c86cad621b889e4462585408664308688c8f2b1c0a479ece6adf620    12847 bytes  artifacts/rag/rag_evaluation_report_v1.md
+d3392b6940c42adf714e8ea9164c923bb4bdc7285466ee68dc7d35feb91820db    12025 bytes  artifacts/rag/rag_evaluation_report_v2.md
+b360b5996fbc7c43315790a1bcbc241c43423bdc0cca9931ff3a7070b772cdbf    8939 bytes  artifacts/rag/closure_analyses_v2.json
+63423af12af461d65ee81ebeea87e232fdfa23b7b921e710908d1c3724a7d687    175 bytes  artifacts/rag/new_queries_user_v1.json
