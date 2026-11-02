@@ -714,6 +714,84 @@ MODEL SELECTION VERDICT: XGBoost Selected as Primary Threat Classifier for Phase
 3. **Inference Latency Advantage:** XGBoost inference latency is `14.71 μs/sample` compared to RF's `38.26 μs/sample` (**2.6× faster throughput**).
 4. **Architectural Handoff:** `shap.TreeExplainer` in Phase 6 will be initialized on the selected `xgb_baseline_category_v1` model using stratified representative background samples.
 
+### 4.12 Explainability via SHAP (Phase 6 Technical Log & Methodology)
+
+Phase 6 implements SHAP (SHapley Additive exPlanations) for the selected XGBoost primary threat classifier (`xgb_baseline_category_v1.pkl`).
+
+#### 1. Explainer Configuration & Memory Safety Protocol
+- **Explainer Architecture:** `shap.TreeExplainer` executed in `feature_perturbation='tree_path_dependent'` mode (`data=None`). In tree-path-dependent mode, SHAP uses the conditional tree structures and coverage statistics learned during training, eliminating background sampling bias and extraneous reference sets.
+- **Sampling Strategy:** Per-class capped sampling (up to 150 rows per category) drawn from the 504,160-row test split (`y_test_category_v1.parquet` / `X_test_v1.parquet`, `seed=42`).
+  - Total Sample Size: **1,793 flows** across all 15 categories.
+  - Rare classes with $\le 150$ samples were fully retained: Heartbleed ($n=2$), Infiltration ($n=7$), Web Attack SQL Injection ($n=4$), Web Attack XSS ($n=130$).
+  - Classes with $> 150$ samples were capped at 150. This avoids proportional sampling bias (which would have assigned $>1,660$ rows to BENIGN and starved rare threat categories).
+- **Hardware Footprint:**
+  - SHAP value array dimensions: `(1793, 76, 15)` in `float32`.
+  - In-memory array size: **7.80 MB** (well below the ~8 GB system boundary).
+  - Peak RSS during attribution: **587.1 MB** (below 700 MB safety limit).
+  - Compute latency: **2.39 s** total (**1.33 ms/sample**).
+
+#### 2. Mathematical Additivity Verification
+Before accepting explanations, an explicit additivity verification was evaluated:
+$$\text{Expected Output} = \text{Base Value} + \sum_{i=1}^{M} \text{SHAP}_i$$
+- Verification result: **`PASSED`** (Tolerance: $1.00 \times 10^{-3}$).
+- Max Absolute Discrepancy: **`7.63e-06`** (conforming to floating-point precision).
+- Mean Absolute Discrepancy: **`1.62e-06`**.
+
+#### 3. Unbiased Global Ranking via Macro-Averaged Mean |SHAP|
+Because the explanation sample uses a per-class cap rather than proportional sampling, global feature importance is calculated as the **macro-averaged mean |SHAP|** (the mean absolute attribution per class, averaged equally across all 15 classes):
+1. `Flow IAT Max` (Macro Mean |SHAP|: 3.1331) — Inter-arrival burst timing.
+2. `Max Packet Length` (Macro Mean |SHAP|: 2.6797) — Peak frame sizing.
+3. `Init_Win_bytes_backward` (Macro Mean |SHAP|: 2.4845) — TCP window scale in reverse flow.
+4. `Flow IAT Min` (Macro Mean |SHAP|: 2.0021) — Tight transmission intervals.
+5. `Active Min` (Macro Mean |SHAP|: 1.8443) — Persistent connection activity.
+6. `Fwd Packet Length Max` (Macro Mean |SHAP|: 1.8078) — Client payload capacity.
+7. `Flow Packets/s` (Macro Mean |SHAP|: 1.7970) — Volumetric transmission rate.
+8. `Bwd Packets/s` (Macro Mean |SHAP|: 1.7517) — Server response packet rate.
+9. `PSH Flag Count` (Macro Mean |SHAP|: 1.6535) — Push flag signaling immediate buffer flush.
+10. `Bwd IAT Max` (Macro Mean |SHAP|: 1.6157) — Maximum server inter-arrival time.
+
+#### 4. Scientific Hypothesis Testing vs. Empirical Findings
+- **PortScan (Hypothesis Confirmed):** `Destination Port` was excluded as an identifier in Phase 2. Model discriminates PortScan via single-flow geometry: `Total Length of Fwd Packets` (1.8120), `min_seg_size_forward` (1.3104), and `Packet Length Mean` (1.1323).
+- **DoS Hulk (Hypothesis Confirmed):** Discriminates via volumetric and window dynamics: `Init_Win_bytes_backward` (2.4377), `Bwd Packet Length Std` (1.6792), and `Idle Max` (1.6134).
+- **FTP-Patator (Hypothesis Confirmed):** Discriminates via predictable authentication handshakes: `Max Packet Length` (6.9015), `Total Backward Packets` (6.0251), and `Fwd PSH Flags` (2.2982).
+- **Botnet (Hypothesis Confirmed):** Discriminates via C2 heartbeat dynamics: `Bwd Packets/s` (2.6385), `Fwd Header Length` (2.4999), and `Init_Win_bytes_backward` (2.3668).
+- **Methodological Disclosure on Low-Support Classes:** Explanations for Heartbleed ($n=2$), Infiltration ($n=7$), and SQL Injection ($n=4$) represent **anecdotal exploratory observations only** and are documented with caveats.
+
+#### 5. Local Error Attribution (Misclassified Case Analysis)
+In addition to high-confidence True Positive waterfalls, an error attribution analysis was performed on misclassified samples (e.g. Sample #376: True=`DoS slowloris`, Pred=`BENIGN`). The attribution showed low packet length variance and low packet rates pushed margins toward BENIGN, providing actionable diagnostic transparency for model boundary refinement.
+
+### 4.13 Deterministic Security Rule Engine & Complementarity Analysis (Phase 7 Technical Log)
+
+Phase 7 implements the deterministic security rule engine operating independently of ML predictions per AGENTS.md.
+
+#### 1. Architectural Safeguards & Dataset Boundary
+- **Input Telemetry:** Operates on raw (unscaled) continuous metrics and `Destination Port` streamed from `artifacts/cleaned/*.csv`. Standardized features (`X_test_v1.parquet`) were excluded from rule evaluation to preserve physical threshold validity.
+- **Dataset Boundary Disclosure:** Audited and confirmed that `MachineLearningCVE` contains `Destination Port` and 76 flow metrics, but omits `Source IP`, `Destination IP`, and `Timestamp`. Rules evaluate per-flow deterministic signatures.
+- **Row Alignment Verification:** Formally asserted `y_extracted_test == y_test_category_v1.parquet` across all **504,160 test flows** before evaluation (`PASSED`).
+- **Train-Only Calibration & Precision Floor:** Enforced a strict 50% precision floor on training rows (`is_train_mask == True`). Rules failing the floor were demoted to `INFORMATIONAL` to prevent alert flooding into Phase 8.
+- **Measured Latency:** Empirically clocked at **0.25 μs/sample** (4,000,000 flows/second throughput), negligible operational overhead.
+
+#### 2. Calibrated Rule Definitions & Performance Metrics (Test Split: 504,160 flows)
+| Rule ID | Threat Target | Severity | Status | Train Prec | Test Prec | Test Recall (TPR) | Test FPR | Test TP | Test FP |
+|---|---|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
+| `R101_SYN_HALF_OPEN` | DoS / PortScan | HIGH | INFORMATIONAL | 0.00% | 0.00% | 0.00% | 0.0036% | 0 | 15 |
+| `R102_HIGH_RATE_BURST` | DoS Hulk / DDoS | CRITICAL | INFORMATIONAL | 0.00% | 0.00% | 0.00% | 0.0000% | 0 | 0 |
+| `R103_SLOW_EXHAUSTION` | DoS Slowloris / Slowhttptest | HIGH | INFORMATIONAL | 20.14% | 19.97% | 3.97% | 3.24% | 3,384 | 13,561 |
+| `R104_PORT_BRUTE_FORCE` | FTP / SSH Brute Force | HIGH | **ACTIVE** | **64.85%** | **63.85%** | **1.64%** | **0.189%** | **1,399** | **792** |
+| `R105_ZERO_WINDOW_TEARDOWN` | TCP Evasion / Scan | MEDIUM | INFORMATIONAL | 0.00% | 0.00% | 0.00% | 0.0000% | 0 | 0 |
+
+- **Active Ensemble Summary:** The calibrated active rule ensemble achieved **63.85% precision**, **1.64% recall**, and **0.189% false-positive rate** (1,399 attacks caught, 792 false alerts).
+
+#### 3. ML vs. Rule Complementarity Matrix (Hybrid Defense Synergy)
+Benchmarked against the primary XGBoost classifier (Phase 5) across the full 504,160-row test split:
+
+| Complementarity Category | Flow Count | % of Test Split | Research & Operational Significance |
+|---|:---:|:---:|---|
+| **Category A (ML & Rules Flagged)** | **1,399** | 0.28% | **True Threat Synergy:** Mutual high-confidence detection on administrative port credential attacks. |
+| **Category B (ML Only Flagged)** | **83,979** | 16.66% | **High-Dimensional ML Generalization:** Captured complex non-linear volumetric, IAT, and window dynamics across DoS, DDoS, PortScan, and Web attacks that simple static rules missed. |
+| **Category C (Rules Only Flagged)** | **792** | 0.16% | **Deterministic Safety Net:** Administrative port traffic flagged by rule policy where ML predicted Benign. |
+| **Category D (Neither Flagged)** | **417,990** | 82.91% | **Clean Benign Traffic:** Operational benign network traffic passed cleanly by both systems. |
+
 ---
 
 ## 5. Experimental Results & Benchmark Log
@@ -725,27 +803,283 @@ MODEL SELECTION VERDICT: XGBoost Selected as Primary Threat Classifier for Phase
 | **XGBoost (Comparative / Selected)** | **99.89%** (bin) / **99.86%** (mc) | **99.53%** (bin) / **99.85%** (wgt) | **99.80%** (bin) / **83.75%** (bal) | **0.9967** (bin) / **0.9985** (wgt) | **0.9999** (bin) / **0.9999** (ovr) | **0.095%** | 957.00 s | **0.015 ms** | **378.82 MB** (fit: 136.59) |
 
 ### 5.2 XAI (SHAP) Top Feature Attribution (Phase 6)
-| Attack Category | Top 1 Discriminative Feature | Top 2 Discriminative Feature | Top 3 Discriminative Feature | Mean \|SHAP Value\| |
+| Attack Category | Top 1 Discriminative Feature | Top 2 Discriminative Feature | Top 3 Discriminative Feature | Top Feature Mean \|SHAP\| |
 |---|---|---|---|---|
-| **Brute Force (Patator)** | *Pending* | *Pending* | *Pending* | *Pending* |
-| **DoS / DDoS** | *Pending* | *Pending* | *Pending* | *Pending* |
-| **PortScan** | *Pending* | *Pending* | *Pending* | *Pending* |
-| **Web Attacks** | *Pending* | *Pending* | *Pending* | *Pending* |
-| **Botnet** | *Pending* | *Pending* | *Pending* | *Pending* |
+| **Brute Force (FTP-Patator)** | `Max Packet Length` | `Total Backward Packets` | `Fwd PSH Flags` | 6.9015 |
+| **Brute Force (SSH-Patator)** | `Total Length of Bwd Packets` | `Bwd Header Length` | `Fwd Packet Length Max` | 12.4637 |
+| **DoS Hulk** | `Init_Win_bytes_backward` | `Bwd Packet Length Std` | `Idle Max` | 2.4377 |
+| **DoS Slowhttptest** | `Flow IAT Max` | `Active Min` | `Flow Packets/s` | 42.1098 |
+| **DoS slowloris** | `Packet Length Std` | `Active Std` | `Bwd Packet Length Max` | 6.4105 |
+| **DoS GoldenEye** | `Flow IAT Min` | `Idle Max` | `min_seg_size_forward` | 5.5580 |
+| **DDoS** | `Init_Win_bytes_forward` | `Bwd Packet Length Mean` | `act_data_pkt_fwd` | 1.7159 |
+| **PortScan** | `Total Length of Fwd Packets` | `min_seg_size_forward` | `Packet Length Mean` | 1.8120 |
+| **Web Attack (Brute Force)** | `Fwd IAT Max` | `Max Packet Length` | `Init_Win_bytes_backward` | 7.9321 |
+| **Web Attack (XSS)** | `PSH Flag Count` | `Init_Win_bytes_backward` | `Bwd Packet Length Min` | 19.2424 |
+| **Botnet (ARES)** | `Bwd Packets/s` | `Fwd Header Length` | `Init_Win_bytes_backward` | 2.6385 |
 
 ### 5.3 Event Correlation & Incident Reduction (Phase 8)
-| Scenario / Capture File | Raw Alert Count | Correlated Incidents | Reduction Ratio (%) | Ground Truth Agreement (%) |
-|---|---|---|---|---|
-| **Tuesday (Patator Validation)** | *Pending* | *Pending* | *Pending* | *Pending* |
-| **Wednesday (DoS / Heartbleed)** | *Pending* | *Pending* | *Pending* | *Pending* |
-| **Friday (PortScan / DDoS)** | *Pending* | *Pending* | *Pending* | *Pending* |
 
-### 5.4 RAG Retrieval Quality & Grounding Precision (Phase 10 & 11)
+*Evaluated on the 20% unseen test partition (504,160 flows) under primary grouping key $K_3 = (\text{Source IP}, \text{Destination IP}, \text{Destination Port})$, inactivity timeout $G = 300\text{ s}$, and hybrid alert ingestion (ML $\cup$ Rule R104). Ground-truth blind execution verified (`correlator.py` receives zero label/source telemetry).*
+
+| Scenario / Capture File | Raw Alert Count ($N_{\text{raw}}$) | Correlated Incidents ($N_{\text{inc}}$) | Multi-Flow ($N \ge 2$) | Singletons ($N=1$) | Reduction Ratio (%) | Multi-Flow Purity ($N \ge 2$) | All-Inc Purity (%) | Consistent Coverage (%) | False Incidents (Zero Attack Flows) |
+|---|---|---|---|---|---|---|---|---|---|
+| **Monday (Benign Control)** | 188 | 167 | 17 | 150 | 11.17% | 100.00% | 100.00% | 0.00% | 167 / 167 (100.0%) |
+| **Tuesday (Patator Validation)** | 2,022 | 165 | 23 | 142 | **91.84%** | 100.00% | 100.00% | 99.94% | 162 / 165 (98.2%) |
+| **Wednesday (DoS / Heartbleed)** | 38,919 | 159 | 32 | 127 | **99.59%** | 92.02% | 92.05% | 92.01% | 156 / 159 (98.1%) |
+| **Thursday Morning (Web Attacks)** | 504 | 87 | 12 | 75 | **82.74%** | 100.00% | 100.00% | 100.00% | 84 / 87 (96.5%) |
+| **Thursday Afternoon (Infiltration)** | 335 | 315 | 14 | 301 | **5.97%** | 100.00% | 100.00% | 100.00% | 312 / 315 (99.1%) |
+| **Friday Morning (Botnet)** | 351 | 196 | 15 | 181 | **44.16%** | 100.00% | 100.00% | 56.12% | 65 / 196 (33.2%) |
+| **Friday Afternoon (PortScan)** | 18,208 | 2,172 ($K_3$) / **66 ($K_2$)** | 1,385 | 787 | **88.07% ($K_3$) / 99.64% ($K_2$)** | 100.00% | 100.00% | 96.01% | 69 / 2,172 (3.2%) |
+| **Friday Afternoon (DDoS)** | 25,643 | 35 | 6 | 29 | **99.86%** | 100.00% | 100.00% | 100.00% | 34 / 35 (97.1%) |
+| **TOTAL TEST SET (Primary)** | **86,170** | **3,296** | **1,504** | **1,792** | **96.17%** | **96.33%** | **96.41%** | **95.36%** | **1,049 / 3,296 (31.83%)** |
+| **FULL DATASET (Supplementary)** | **430,586** | **6,954** | **3,721** | **3,233** | **98.39%** | **96.34%** | **96.40%** | **96.18%** | **1,343 / 6,954 (19.31%)** |
+
+#### Per-Class Compression Breakdown (Test Partition, $K_3, G=300\text{ s}$)
+
+| Attack Category | Ground-Truth Alerts Flagged | Correlated Incidents ($N_{\text{inc}}$) | Multi-Flow ($N \ge 2$) | Reduction Ratio (%) | Compression Factor |
+|---|---|---|---|---|---|
+| `DoS Hulk` | 34,559 | 1 | 1 | **100.00%** | **34559.0x** |
+| `DDoS` | 25,602 | 1 | 1 | **100.00%** | **25602.0x** |
+| `PortScan` | 18,134 | 2,103 | 1,380 | **88.40%** | **8.6x** |
+| `DoS GoldenEye` | 2,048 | 1 | 1 | **99.95%** | **2048.0x** |
+| `FTP-Patator` | 1,185 | 2 | 1 | **99.83%** | **592.5x** |
+| `DoS slowloris` | 1,069 | 1 | 1 | **99.91%** | **1069.0x** |
+| `DoS Slowhttptest` | 1,046 | 1 | 1 | **99.90%** | **1046.0x** |
+| `SSH-Patator` | 642 | 1 | 1 | **99.84%** | **642.0x** |
+| `Web Attack - Brute Force` | 281 | 1 | 1 | **99.64%** | **281.0x** |
+| `Bot` | 278 | 131 | 9 | **52.88%** | **2.1x** |
+| `Web Attack - XSS` | 125 | 1 | 1 | **99.20%** | **125.0x** |
+| `Infiltration` | 7 | 3 | 3 | **57.14%** | **2.3x** |
+| `Web Attack - Sql Injection` | 2 | 1 | 1 | **50.00%** | **2.0x** |
+| `Heartbleed` | 1 | 1 | 0 | **0.00%** | **1.0x** |
+
+#### Gap Window Sensitivity Sweep ($G \in \{60, 300, 900, 1800\}\text{ s}$)
+
+| Gap Timeout ($G$) | Total Incidents | Multi-Flow ($N \ge 2$) | Singletons ($N=1$) | Reduction Ratio (%) | Multi-Flow Purity ($N \ge 2$) | All-Inc Purity (%) | Consistent Coverage (%) |
+|---|---|---|---|---|---|---|---|
+| `G = 60s` | 4,180 | 2,151 | 2,029 | 95.15% | 100.00% | 100.00% | 98.86% |
+| `G = 300s` | 3,296 | 1,504 | 1,792 | 96.17% | 96.33% | 96.41% | 95.36% |
+| `G = 900s` | 2,119 | 1,277 | 842 | 97.54% | 94.97% | 95.02% | 94.65% |
+| `G = 1800s` | 1,750 | 1,190 | 560 | 97.97% | 94.98% | 95.02% | 94.81% |
+
+**Per-Day Incident Fragmentation Across Gap Windows ($G$):**
+- Monday: $60\text{ s} \rightarrow 180$, $300\text{ s} \rightarrow 167$, $900\text{ s} \rightarrow 109$, $1800\text{ s} \rightarrow 85$.
+- Tuesday: $60\text{ s} \rightarrow 187$, $300\text{ s} \rightarrow 165$, $900\text{ s} \rightarrow 114$, $1800\text{ s} \rightarrow 73$.
+- Wednesday: $60\text{ s} \rightarrow 184$, $300\text{ s} \rightarrow 159$, $900\text{ s} \rightarrow 120$, $1800\text{ s} \rightarrow 96$.
+- Thursday Morning: $60\text{ s} \rightarrow 95$, $300\text{ s} \rightarrow 87$, $900\text{ s} \rightarrow 61$, $1800\text{ s} \rightarrow 40$.
+- Thursday Afternoon: $60\text{ s} \rightarrow 326$, $300\text{ s} \rightarrow 315$, $900\text{ s} \rightarrow 283$, $1800\text{ s} \rightarrow 264$.
+- Friday Morning: $60\text{ s} \rightarrow 235$, $300\text{ s} \rightarrow 196$, $900\text{ s} \rightarrow 169$, $1800\text{ s} \rightarrow 157$.
+- Friday Afternoon (PortScan): $60\text{ s} \rightarrow 2,935$, $300\text{ s} \rightarrow 2,172$, $900\text{ s} \rightarrow 1,247$, $1800\text{ s} \rightarrow 1,028$.
+- Friday Afternoon (DDoS): $60\text{ s} \rightarrow 38$, $300\text{ s} \rightarrow 35$, $900\text{ s} \rightarrow 18$, $1800\text{ s} \rightarrow 16$.
+
+#### Grouping Key Ablations: $K_3$ vs $K_2$ vs $K_4$ vs Dest-Port-Only ($G=300\text{ s}$)
+
+| Capture Day | $K_3$ Primary: `(Src, Dst, Dport)` | $K_2$ Port-Agile: `(Src, Dst)` | $K_4$ Class-Qualified: `(Src, Dst, Dport, Class)` | Dest-Port-Only: `(Dport,)` |
+|---|---|---|---|---|
+| `Monday` | 167 | 145 | 167 | 97 |
+| `Tuesday` | 165 | 147 | 165 | 63 |
+| `Wednesday` | 159 | 141 | 166 | 79 |
+| `Thursday Morning` | 87 | 76 | 94 | 45 |
+| `Thursday Afternoon` | 315 | 105 | 315 | 259 |
+| `Friday Morning` | 196 | 83 | 196 | 160 |
+| `Friday Afternoon (PortScan)` | 2,172 | 66 | 2,177 | 2,124 |
+| `Friday Afternoon (DDoS)` | 35 | 29 | 36 | 20 |
+| **TOTAL TEST SET** | **3,296** | **792** | **3,316** | **2,846** |
+| **Multi-Flow Purity ($N \ge 2$)** | **96.33%** | **96.39%** | **99.98%** | **96.28%** |
+| **Consistent Coverage** | **95.36%** | **96.34%** | **98.97%** | **95.37%** |
+
+#### Key Empirical Findings & Methodological Audits
+1. **Tuesday Acceptance Gate (Passed 5/5):**
+   - *Context Note:* Tuesday represents the easiest test case in the dataset because all attacks originate from a single gateway IP (`172.16.0.1`), target distinct well-known ports (`21` for FTP, `22` for SSH), and exhibit dense continuous packet streams.
+   - FTP-Patator episode fragmentation: **2 incidents** (Pre-registered goal: $\le 5$).
+   - SSH-Patator episode fragmentation: **1 incident** (Pre-registered goal: $\le 5$).
+   - Flow-weighted purity: **100.000%** (Pre-registered goal: $\ge 99.5\%$).
+   - Incident-weighted purity: **100.000%** (Pre-registered goal: $\ge 99.5\%$).
+   - Label-consistent multi-flow coverage: **99.945%** (Pre-registered goal: $\ge 98.0\%$).
+2. **Volumetric Dominance & Alert Aggregation Dynamics:**
+   - On unseen test data, 86,170 raw alert flows were grouped into **3,296 incidents** (**96.17% reduction**, **26.1× compression factor**).
+   - **Volumetric Dominance:** The pooled reduction ratio is 96.05% dominated by three captures: Wednesday DoS (38,919 flows), PortScan (18,208 flows), and DDoS (25,643 flows), which sum to **82,770 out of the 86,170 alerts**.
+   - **Benign False Alarms Limitation:** Event correlation **does not eliminate or reduce benign false-positive flows**. Sporadic false alarms remain as isolated singletons ($1,792$ singletons across test split), while false alarms occurring in temporal proximity aggregate into spurious multi-flow incidents.
+3. **Monday Benign Control & Spurious Multi-Flow Campaigns:**
+   - Monday (100% benign) yielded 188 flagged flows forming **167 false incidents**: 150 singletons and **17 multi-flow incidents** (spanning 38 flows).
+   - **Root Cause Analysis:** 100% of these 17 multi-flow incidents were generated exclusively by Rule R104 (`RULE_ONLY:R104`) targeting `192.168.10.50` on port 21 or 22 from internal benign hosts (`.12`, `.16`, `.17`, `.19`, `.51`), containing **0 ML-flagged constituent flows**. In contrast, all 34 ML false alarms on Monday arrived isolated in time or key, forming singletons. False alarms can and do aggregate into spurious campaigns.
+4. **Ingestion Ablation & Category C Audit:**
+   - Under ML-only ingestion, false incidents numbered **367 out of 2,614 (14.04%)**.
+   - Under Hybrid ingestion (ML $\cup$ R104), false incidents rose to **1,049 out of 3,296 (31.83%)** — adding **+682 false incidents**.
+   - **Category C Ground-Truth Audit:** Exactly **0 attack flows** on the test partition were flagged only by R104 (all 792 Category C flows were benign false alarms). R104 expanded analyst incident volume without capturing any novel ground-truth threats.
+5. **Purity Disaggregation ($N \ge 2$ vs All Incidents):**
+   - Singletons ($1,792$ incidents) are trivially 100% pure.
+   - For multi-flow incidents ($N \ge 2$, $1,504$ incidents, $84,378$ flows), flow-weighted purity is **96.33%** and incident-weighted purity is **99.96%**.
+6. **PortScan Key Ablation ($K_3$ vs $K_2$):**
+   - Under $K_3 = (\text{SrcIP}, \text{DstIP}, \text{DstPort})$, horizontal port scanning fragments across ports into 2,172 incidents.
+   - Relaxing to $K_2 = (\text{SrcIP}, \text{DstIP})$ collapses the entire scan sweep into **66 incidents** (**32.9× collapse factor**) with 100.0% purity.
+7. **Tuesday $K_2$ Merge Audit:**
+   - Under $K_2 = (\text{SrcIP}, \text{DstIP})$, FTP-Patator and SSH-Patator **did not merge** (0 merged incidents). Their ~3.5-hour temporal separation ($\approx 13,000\text{ s} \gg 300\text{ s}$) prevented temporal aliasing. Therefore, all empirical evidence discriminating $K_2$ and $K_3$ behavior comes from horizontal scanning (PortScan on Friday Afternoon).
+8. **Architectural Comparison (Sliding Gap vs Fixed Tumbling):**
+   - Sliding gap sessionizer ($G=300\text{ s}$) produces **3,296 incidents** versus **4,524 incidents** from fixed clock tumbling bins, preventing artificial campaign fracture across fixed clock intervals.
+9. **Pre-Registration Merge Audit & Inter-Flow Gap:**
+   - Validated: slowloris $\rightarrow$ Slowhttptest (merged @ 300s), Hulk $\rightarrow$ GoldenEye (merged @ 300s), Slowhttptest $\rightarrow$ Hulk (merged @ 900s), Web Brute Force $\rightarrow$ XSS (merged @ 900s).
+   - Web XSS $\rightarrow$ SQL Injection was observed split at 300s: measured minimum inter-flow gap on victim port 80 is **360 seconds (6.00 minutes)**, which strictly exceeds the 300s inactivity timeout.
+   - **Wednesday Mathematical Independence:** Purity and coverage are independently formulated:
+     $$\text{Purity}_{\text{flow}} = \frac{\sum_{i \in \mathcal{I}} \max_{c} \sum_{j \in i} \mathbb{I}(y_j = c)}{\sum_{i \in \mathcal{I}} N_i} \quad (92.05\% \text{ overall}, 92.02\% \text{ for } N \ge 2)$$
+     $$\text{Coverage}_{\text{flagged}} = \frac{\sum_{i \in \mathcal{I}, N_i \ge 2, \text{maj}(i) = c \ne \text{BENIGN}} \sum_{j \in i} \mathbb{I}(y_j = c)}{N_{\text{attack, flagged}}} \quad (92.01\%)$$
+     The numeric values (92.05% vs 92.01%) are verified as mathematically independent.
+
+
+### 5.4 Transparent Incident Risk Scoring & Prioritization (Phase 9)
+
+*Evaluated on the unseen 50% Report Half ($N=1,644$ incidents: $1,119$ true attacks, $525$ false alarms, $0$ mixed incidents) drawn from the 20% test partition ($3,296$ incidents). Weights were calibrated on the 50% Calibration Half ($1,652$ incidents) and committed to `preregistration_risk_v1.md` before scoring the report half.*
+
+$$\text{Risk Score} = 0.30 \cdot C_{\text{ML}} + 0.10 \cdot \text{Sev} + 0.30 \cdot S_{\text{vol}} + 0.30 \cdot B_{\text{rule}} \in [0, 100]$$
+
+#### Primary Metric Summary (Report Half, Unseen Incidents)
+
+| Evaluation Metric | Measured Result | Evaluation Baseline / Benchmark | Operational Significance |
+|---|---|---|---|
+| **ROC-AUC (Attack vs False)** | **0.96613** | 95% CI: **[0.95747, 0.97373]**\* | High separation of threats from benign false alarms |
+| **Calibration-to-Report Delta** | **+0.00554** | Calib: 0.96059 $\rightarrow$ Report: 0.96613 | Measured generalization across stratified incident halves |
+| **Precision@10 (P@10)** | **100.00%** | Base Rate: 68.07% | Zero false alarms in top 10 analyst queue |
+| **Precision@25 (P@25)** | **100.00%** | Base Rate: 68.07% | Zero false alarms in top 25 analyst queue |
+| **Precision@50 (P@50)** | **100.00%** | Base Rate: 68.07% | Zero false alarms in top 50 analyst queue |
+| **Precision@100 (P@100)** | **100.00%** | Base Rate: 68.07% | Zero false alarms in top 100 analyst queue |
+| **Precision@200 (P@200)** | **100.00%** | Base Rate: 68.07% | Zero false alarms in top 200 analyst queue |
+| **Precision@300 (P@300)** | **100.00%** | Base Rate: 68.07% | Zero false alarms in top 300 analyst queue |
+| **Precision@400 (P@400)** | **100.00%** | Base Rate: 68.07% | Zero false alarms in top 400 analyst queue |
+| **Precision@500 (P@500)** | **100.00%** | Base Rate: 68.07% | Zero false alarms in top 500 analyst queue |
+| **Rank of First False Alarm** | **#539** | Incident ID: 1021 (Bot, Score: 42.38) | Clean run of 538 consecutive true attack incidents |
+| **Critical/High Recall@100** | **50.00%** (1 / 2) | Random: 6.08% | Triage of severe threats |
+| **Mixed Incidents Count** | **0** | $0 < N_{\text{att}} \le N/2$ | Clean partition separation |
+
+*\*Methodological Disclosure on Confidence Intervals: Incident-level bootstrap treats individual PortScan fragments as independent observations; this assumption is anti-conservative. All bootstrap p-values have been omitted. A cluster bootstrap by `(source_day, majority_gt_label)` campaign yields 12 total clusters, of which only 4 contain attacks. Because there are fewer than ~10 effective positive clusters, the cluster bootstrap CI is not inferentially meaningful; point estimates are reported alongside this disclosure.*
+
+#### Comparative Strategy Baselines (Report Half)
+
+| Prioritization Strategy | Formulation / Weights | ROC-AUC | $\Delta \text{AUC}$ vs Hybrid | Incident-Level Bootstrap 95% CI |
+|---|---|---|---|---|
+| **Hybrid Calibrated (Ours)** | **$0.30 C_{\text{ML}} + 0.10 \text{Sev} + 0.30 S_{\text{vol}} + 0.30 B_{\text{rule}}$ (Variant B)** | **0.96613** | — | — |
+| **Equal Weights Heuristic** | $0.25 C_{\text{ML}} + 0.25 \text{Sev} + 0.25 S_{\text{vol}} + 0.25 B_{\text{rule}}$ | **0.94334** | -0.02279 | **[+0.01558, +0.03094]** |
+| **ML Confidence Only** | $1.00 C_{\text{ML}}$ | **0.94514** | -0.02098 | **[+0.01179, +0.03107]** |
+| **Burst Volume Only** | $1.00 S_{\text{vol}}$ | **0.78051** | -0.18562 | **[+0.16104, +0.21182]** |
+| **Severity Only** | $1.00 \text{Sev}$ | **0.77362** | -0.19251 | **[+0.16813, +0.21871]** |
+| **Random Baseline** | $\mathcal{U}(0, 100)$ | **0.49847** | -0.46766 | — |
+
+#### Attack Incident Composition & Effective Class Support (Report Half)
+- **Report-Half Attack Composition:** The 1,119 true attack incidents in the report half consist strictly of:
+  - `PortScan`: **1,051 incidents (93.92%)**
+  - `Botnet (ARES)`: **66 incidents (5.90%)**
+  - `FTP-Patator`: **1 incident (0.09%)**
+  - `Infiltration`: **1 incident (0.09%)**
+  - *Other classes (DoS Hulk, DoS Slowhttptest, DoS slowloris, DoS GoldenEye, DDoS, Web attacks, SSH-Patator, Heartbleed):* **0 attack incidents in report half**.
+- **Empirical Scope:** The report-half result is effectively a demonstration of **PortScan plus Botnet** discrimination against benign false alarms.
+- **Sub-Cohort Discrimination ($\ge 20$ incidents in report half):**
+  - `PortScan` ($N=1,051$ attacks vs $525$ false): **$\text{ROC-AUC} = 0.96878$**
+  - `Botnet (ARES)` ($N=66$ attacks vs $525$ false): **$\text{ROC-AUC} = 0.92284$**
+  - Class-balanced macro AUC (averaging PortScan and Botnet): **0.94581**
+  - AUC excluding PortScan (evaluating 68 non-PortScan attacks vs 525 false): **0.92511**
+
+#### Descriptive Per-Class Distribution Over ALL Test Incidents ($N=3,296$)
+
+| Primary Threat Category | Total Incidents | In-Sample Calib | Out-of-Sample Report | True Attacks | False Alarms | Mean Risk Score | Std Dev | Score Range [Min, Max] | Sample Status |
+|---|---|---|---|---|---|---|---|---|---|
+| `PortScan` | 2,305 | 1,143 | 1,162 | 2,103 | 202 | **47.17** | 9.62 | [25.55, 61.96] | In-sample / Out-of-sample mixed |
+| `RULE_ONLY:R104` | 682 | 338 | 344 | 0 | 682 | **6.94** | 1.57 | [6.38, 17.92] | In-sample / Out-of-sample mixed |
+| `Bot` | 183 | 93 | 90 | 131 | 52 | **38.64** | 6.28 | [27.46, 65.98] | In-sample / Out-of-sample mixed |
+| `DoS Slowhttptest` | 51 | 30 | 21 | 0 | 51 | **36.58** | 3.20 | [27.67, 44.12] | In-sample / Out-of-sample mixed |
+| `DoS Hulk` | 48 | 32 | 16 | 1 | 47 | **33.19** | 6.60 | [25.57, 63.96] | In-sample / Out-of-sample mixed |
+| `DoS slowloris` | 6 | 3 | 3 | 1 | 5 | **36.70** | 14.84 | [25.49, 63.12] | In-sample / Out-of-sample mixed |
+| `Web Attack - Brute Force` | 5 | 3 | 2 | 3 | 2 | **48.81** | 17.68 | [31.58, 67.75] | In-sample / Out-of-sample mixed |
+| `Web Attack - XSS` | 3 | 0 | 3 | 0 | 3 | **29.58** | 0.35 | [29.18, 29.78] | Out-of-sample only |
+| `Infiltration` | 3 | 2 | 1 | 3 | 0 | **49.39** | 2.27 | [46.92, 51.37] | In-sample / Out-of-sample mixed |
+| `FTP-Patator` | 3 | 1 | 2 | 1 | 2 | **55.68** | 36.96 | [29.64, 97.99] | In-sample / Out-of-sample mixed |
+| `DDoS` | 2 | 2 | 0 | 1 | 1 | **47.23** | 23.71 | [30.46, 64.00] | In-sample only |
+| `SSH-Patator` | 2 | 2 | 0 | 1 | 1 | **66.01** | 45.21 | [34.04, 97.98] | In-sample only |
+| `DoS GoldenEye` | 1 | 1 | 0 | 0 | 1 | **28.07** | 0.00 | [28.07, 28.07] | In-sample only |
+| `Heartbleed` | 1 | 1 | 0 | 1 | 0 | **44.38** | 0.00 | [44.38, 44.38] | In-sample only |
+| `Web Attack - Sql Injection` | 1 | 1 | 0 | 1 | 0 | **49.36** | 0.00 | [49.36, 49.36] | In-sample only |
+
+#### Added Value: Multi-Flow ($N \ge 2$) and Singletons ($N = 1$) Disaggregation
+
+| Incident Cohort | Total Incidents | Attack / False Count | Frozen Score ROC-AUC | ML-Confidence Only ROC-AUC | $\Delta \text{AUC}$ | Added-Value Assessment |
+|---|---|---|---|---|---|---|
+| **Report Half: Multi-Flow ($N \ge 2$)** | 755 | 697 attack / 58 false | **0.99985** | **0.99985** | **+0.00000** | Ceiling discrimination |
+| **Report Half: Singletons ($N = 1$)** | 889 | 422 attack / 467 false | **0.90454** | **0.90882** | **-0.00428** | Dominated by ML classifier |
+| **Full Test: Multi-Flow ($N \ge 2$)** | 1,504 | 1,400 attack / 104 false | **0.99183** | **0.98160** | **+0.01023** | Measurable multi-flow gain |
+| **Full Test: Singletons ($N = 1$)** | 1,792 | 847 attack / 945 false | **0.90488** | **0.91145** | **-0.00657** | Isolated singletons rely on classifier |
+
+#### Grouping Key Sensitivity: Frozen Score on $K_2$ Incidents (Secondary Result)
+Under the port-agile grouping key $K_2 = (\text{SrcIP}, \text{DstIP})$, the total incident count decreases from $3,296$ to **$792$ incidents** (47 attack, 745 false). Applying the frozen risk model (without refitting, noting that $N_{\text{ref}}=25$ was set on $K_3$ sizes) yields **$\text{ROC-AUC} = 0.97640$**.
+
+#### Severity Weight Policy Operating-Point Menu (Exploratory, Calibration Half Only)
+$w_2$ is an analyst policy parameter not identified by the binary AUC objective because PortScan dominates incident volume. The table below presents an exploratory operating-point menu evaluated on the Calibration Half ($N=8$ Critical/High attacks):
+
+| Configuration Type | Weight Vector $(w_1, w_2, w_3, w_4)$ | Calibration ROC-AUC | Mean Rank of Critical/High ($N=8$) | Priority Mechanics |
+|---|---|---|---|---|
+| **Frozen Calibrated Row** | **$(0.30, 0.10, 0.30, 0.30)$** | **0.96059** | **336.62 / 1,128** | Tied global optimum with active rule bonus |
+| *Re-optimized ($w_2 = 0.10$)* | $(0.60, 0.10, 0.30, 0.00)$ | **0.96744** | 352.75 / 1,128 | Boundary optimization without rule bonus |
+| *Re-optimized ($w_2 = 0.25$)* | $(0.55, 0.25, 0.20, 0.00)$ | **0.95788** | 54.88 / 1,128 | Prioritizes severe incidents into top 5% |
+| *Re-optimized ($w_2 = 0.40$)* | $(0.45, 0.40, 0.15, 0.00)$ | **0.92910** | **4.88 / 1,128** | Forces Critical/High directly to top 5 slots |
+
+*Critical/High incident counts: Calibration Half = 8 (Web Attack Brute Force: 3, Infiltration: 2, SQLi: 1, SSH-Patator: 1, Heartbleed: 1); Report Half = 2 (FTP-Patator: 1, Infiltration: 1).*
+
+#### Methodological Limitations & Analytical Findings
+1. **Analyst-Assigned Severity Table:** The severity lookup table (`SEVERITY_TABLE_PRIMARY`) utilizes **analyst-assigned heuristic severity tiers** (Critical=100, High=80, Medium=60, Low / Volumetric Availability=40, Reconnaissance=20, Zero=0). It reflects expert operational security prioritization rather than an empirical formula directly derived from NIST SP 800-61 or MITRE ATT&CK.
+2. **Operational Presentation Requirement:** Downstream dashboards (Phase 13) and LLM prompt templates (Phase 11) must present `severity_tier` alongside `risk_score` because composite risk scores do not constitute an intrinsic severity ranking. Critical threats (Infiltration: 49.39, SQLi: 49.36, Heartbleed: 44.38) score similarly to volumetric reconnaissance (PortScan: 47.17) and floods (DDoS: 47.23) due to volume saturation ($w_3=0.30$) outweighing severity ($w_2=0.10$).
+3. **Rule Bonus Ceiling:** High composite scores ($>68$) are attained exclusively by FTP-Patator (mean 55.68, max 97.99) and SSH-Patator (mean 66.01, max 97.98) due to the deterministic rule bonus ($B_{\text{rule}}=30.00$). Without rule bonus, composite scores cannot exceed 70.00.
+4. **Pre-Registered v1 Profile & Non-Identification of $w_2, w_4$:** $w_2$ and $w_4$ are tie-break selections not uniquely identified by binary AUC alone because PortScan dominates incident volume ($>93\%$) and XGBoost already flags all flows matched by R104. The frozen weights vector $(0.30, 0.10, 0.30, 0.30)$ constitutes a pre-registered v1 profile.
+5. **Between-Cohort Volume Effect:** The $+0.021$ AUC gain of the composite score over pure ML confidence ($0.96613$ vs $0.94514$) is a between-cohort volume effect: within multi-flow ($N \ge 2$), gain is $+0.01023$ across full test ($+0.00000$ on report half); within singletons ($N=1$), risk score has slightly lower AUC ($-0.00657$ full test / $-0.00428$ report half) due to volume-scaling compression.
+6. **$K_2$ vs $K_3$ Non-Comparability:** $K_2$ collapses horizontal scans into large multi-thousand flow incidents where $N_{\text{ref}}=25$ saturates immediately. $K_2$ AUC (0.97640) cannot be directly compared to $K_3$ AUC (0.96613).
+7. **Convex Combination Formulation:** The risk score is strictly bounded in $[0, 100]$ via normalized convex weighting ($\sum w_i = 1.0$).
+8. **Volume Saturation ($N_{\text{ref}} = 25$):** $S_{\text{vol}}$ saturates for $N \ge 25$ flows, preventing multi-thousand flow volumetric floods from mathematically drowning out low-volume targeted attacks.
+9. **Shared Temporal Campaigns:** The 50/50 split across incidents is stratified across the test partition; both halves share the same 8 calendar days.
+10. **Retrospective Incident Risk:** Incident risk scoring is performed retrospectively after sessionization gap closure ($G=300\text{ s}$).
+
+### 5.5 RAG Retrieval Quality & Knowledge Grounding (Phase 10 & 11)
+
+#### 5.5.1 Phase 10 Empirical Knowledge Retrieval Evaluation (Untouched Test Partition)
+Phase 10 implements offline local semantic retrieval using `all-MiniLM-L6-v2` and local persistent `ChromaDB==1.5.9`. The authoritative primary corpus consists of MITRE ATT&CK v20.0 STIX, NIST SP 800-61r3 (CSF 2.0 Community Profile), NVD CVE-2014-0160, and OWASP Top 10 (2021). Zero synthetic or LLM-generated texts are present in the knowledge corpus.
+
+Evaluation protocol and hypotheses were pre-registered in `artifacts/rag/preregistration_rag_v1.md` (SHA-256: `a87836067c83d865d7576c087daa46dc0e94092c91e296e2c51b0727b4f9a309`) across 109 curated queries. Grid selection and threshold tuning were conducted strictly on the Development partition ($n=40$ queries: 26 threats, 14 negatives):
+- **Dev Chunking Comparison:** **C512** (512 tokens / 100 overlap) selected as winning grid with highest MRR ($0.3811$, Macro-MRR $0.3886$), outperforming C256 (MRR $0.3732$) and C1024 (MRR $0.3542$, exhibiting information dilution).
+- **Dev Threshold Sweep:** Optimal acceptance threshold calibrated to $\tau^* = 0.35$ ($\text{Max } F_1 = 0.8197$, Precision = 0.7143, Threat Acceptance Recall = 0.9615, False Accept Rate $\text{FAR} = 0.7143$).
+
+The frozen winning configuration (C512, $\tau^* = 0.35$) was evaluated on the untouched Test partition ($n=54$ queries: 38 threats, 16 negatives):
+
+| Metric | Measured Value | Wilson 95% Confidence Interval | Methodological Description |
+|---|---|---|---|
+| **Recall@1** | **0.3158** (12 / 38) | $[0.1908, 0.4746]$ | Primary gold technique ranked in slot #1 |
+| **Recall@3** | **0.5263** (20 / 38) | $[0.3726, 0.6752]$ | Primary gold technique ranked in top-3 slots |
+| **Recall@5** | **0.6842** (26 / 38) | $[0.5254, 0.8092]$ | Primary gold technique ranked in top-5 slots |
+| **MRR** | **0.4478** | — | Mean Reciprocal Rank over test threat queries |
+| **Macro-Recall@1** | **0.3111** | — | Unweighted mean across 14 attack categories |
+| **Macro-Recall@3** | **0.5333** | — | Unweighted mean across 14 attack categories |
+| **Macro-Recall@5** | **0.7000** | — | Unweighted mean across 14 attack categories |
+| **Macro-MRR** | **0.4502** | — | Unweighted mean across 14 attack categories |
+| **Negative ROC-AUC** | **0.7352** | — | Top-1 cosine similarity separation on negatives |
+| **FAR @ $\tau^*=0.35$** | **0.7500** (12 / 16) | $[0.5050, 0.8982]$ | False accept rate on negative queries |
+
+#### 5.5.2 Comparative Baselines on Test Partition
+| Retrieval Approach | Recall@1 | Recall@3 | Recall@5 | MRR | Architectural Characteristics |
+|---|---|---|---|---|---|
+| **Semantic RAG (C512, all-MiniLM-L6-v2)** | **0.3158** | **0.5263** | **0.6842** | **0.4478** | Unsupervised semantic matching; generalizes to unlabeled observables (MRR=0.3926) |
+| **Naive Label Lookup** | 1.0000 | 1.0000 | 1.0000 | 1.0000 | Deterministic 1:1 dictionary lookup (requires exact ground-truth label; zero generalization) |
+| **Random Retrieval (100 trials)** | 0.0063 | 0.0176 | 0.0350 | 0.0147 | Empirical Monte Carlo null distribution across 2,060 chunks ($p < 0.0001$) |
+
+*Statistical Gain:* Semantic RAG achieves a **$30.5\times$ MRR gain** ($0.4478$ vs. $0.0147$) and a **$19.5\times$ Recall@5 gain** over the random null baseline.
+
+#### 5.5.3 Operational Query Formulation Performance
+- **Schema-Derived Telemetry Queries ($n=21$):** Recall@1 = 0.3810, Recall@3 = 0.5714, Recall@5 = 0.8095, MRR = 0.5230.
+- **Unlabeled Observable Behavior Queries ($n=9$):** Recall@1 = 0.2222, Recall@3 = 0.5556, Recall@5 = 0.6667, MRR = 0.3926.
+
+#### 5.5.4 Production Serving & Fail-Safe Architecture
+- `RAGRetriever` (`ml_service/src/rag/retriever.py`) delivers operational retrieval with fail-safe fallback to NIST SP 800-61r3 / CSF 2.0 incident triage guidance (`RS.AN`, `RS.MI`, `RC`) if the vector database is unreachable or query similarity is below $\tau^*=0.35$.
+- Automated unit test suite (`ml_service/tests/test_retriever.py`) verifies fallback mode, schema conformity, and threshold filtering; all 20 system unit tests passed.
+
+#### 5.5.5 LLM Decision-Support & Hallucination Assessment (Phase 11 Target Scenarios)
 | Query Scenario | Relevant Context Retrieved? | Top-3 Chunk Precision | LLM Hallucination Rate (%) | Grounded Evidence Score |
 |---|---|---|---|---|
-| **SSH-Patator Incident** | *Pending* | *Pending* | 0.0% (target) | *Pending* |
-| **DoS Hulk Incident** | *Pending* | *Pending* | 0.0% (target) | *Pending* |
-| **SQL Injection Incident** | *Pending* | *Pending* | 0.0% (target) | *Pending* |
+| **SSH-Patator Incident** | Yes (T1110.001) | Measured (Phase 10) | 0.0% (Phase 11 target) | *Pending Phase 11* |
+| **DoS Hulk Incident** | Yes (T1499.003) | Measured (Phase 10) | 0.0% (Phase 11 target) | *Pending Phase 11* |
+| **SQL Injection Incident** | Yes (T1190) | Measured (Phase 10) | 0.0% (Phase 11 target) | *Pending Phase 11* |
 
 ---
 

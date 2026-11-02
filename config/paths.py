@@ -54,6 +54,34 @@ class Paths:
         FRIDAY_DDOS_CSV,
     ]
 
+    # ── Labelled flows with IPs & timestamps (TrafficLabelling export) ────────
+    TRAFFIC_LABELLING_DIR: Path = Path(
+        os.getenv(
+            "TRAFFIC_LABELLING_DIR",
+            str(_ROOT / "GeneratedLabelledFlows" / "TrafficLabelling_"),
+        )
+    )
+
+    LABELLED_MONDAY_CSV = TRAFFIC_LABELLING_DIR / "Monday-WorkingHours.pcap_ISCX.csv"
+    LABELLED_TUESDAY_CSV = TRAFFIC_LABELLING_DIR / "Tuesday-WorkingHours.pcap_ISCX.csv"
+    LABELLED_WEDNESDAY_CSV = TRAFFIC_LABELLING_DIR / "Wednesday-workingHours.pcap_ISCX.csv"
+    LABELLED_THURSDAY_AM_CSV = TRAFFIC_LABELLING_DIR / "Thursday-WorkingHours-Morning-WebAttacks.pcap_ISCX.csv"
+    LABELLED_THURSDAY_PM_CSV = TRAFFIC_LABELLING_DIR / "Thursday-WorkingHours-Afternoon-Infilteration.pcap_ISCX.csv"
+    LABELLED_FRIDAY_AM_CSV = TRAFFIC_LABELLING_DIR / "Friday-WorkingHours-Morning.pcap_ISCX.csv"
+    LABELLED_FRIDAY_PORTSCAN_CSV = TRAFFIC_LABELLING_DIR / "Friday-WorkingHours-Afternoon-PortScan.pcap_ISCX.csv"
+    LABELLED_FRIDAY_DDOS_CSV = TRAFFIC_LABELLING_DIR / "Friday-WorkingHours-Afternoon-DDos.pcap_ISCX.csv"
+
+    LABELLED_CSVS: list[Path] = [
+        LABELLED_MONDAY_CSV,
+        LABELLED_TUESDAY_CSV,
+        LABELLED_WEDNESDAY_CSV,
+        LABELLED_THURSDAY_AM_CSV,
+        LABELLED_THURSDAY_PM_CSV,
+        LABELLED_FRIDAY_AM_CSV,
+        LABELLED_FRIDAY_PORTSCAN_CSV,
+        LABELLED_FRIDAY_DDOS_CSV,
+    ]
+
     # ── Saved models (Phase 4+) ───────────────────────────────────────────────
     MODELS_DIR: Path = Path(
         os.getenv("MODELS_DIR", str(_ROOT / "models"))
@@ -73,6 +101,9 @@ class Paths:
     ARTIFACTS_DIR: Path = Path(
         os.getenv("ARTIFACTS_DIR", str(_ROOT / "artifacts"))
     )
+
+    # ── Reference table directory (Phase 8+) ──────────────────────────────────
+    REFERENCE_DIR: Path = ARTIFACTS_DIR / "reference"
 
     @staticmethod
     def artifact(filename: str) -> Path:

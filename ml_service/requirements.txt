@@ -12,13 +12,11 @@ shap==0.52.0
 pyarrow==25.0.1                # Parquet engine for Phase 3+ split artifacts; cp314-cp314-win_amd64 wheel
                                # confirmed & installed 2026-09-08. Provides ParquetWriter for
                                # incremental streaming writes in the 3-pass feature_engineer pipeline.
-sentence-transformers==3.3.*   # installed separately (pulls torch CPU-only)
-chromadb==0.6.*                # installed separately (Phase 10+)
+sentence-transformers==3.3.1   # CPU torch (torch==2.15.0+cpu via PyTorch index, installed 2026-11-02)
+chromadb==1.5.9                # Rust-based CFFI abi3 engine (installed 2026-11-02; upgraded from 0.6.* because chroma-hnswlib lacks cp314 wheels)
 python-dotenv==1.2.3
 psutil==7.2.2
 
-# Install sentence-transformers with:
-# pip install --only-binary :all: sentence-transformers --extra-index-url https://download.pytorch.org/whl/cpu
-# Install chromadb with:
-# pip install --only-binary :all: chromadb
+# Install sentence-transformers and chromadb with:
+# pip install --only-binary :all: -c ml_service/constraints.txt chromadb==1.5.9 sentence-transformers==3.3.1 torch --extra-index-url https://download.pytorch.org/whl/cpu
 

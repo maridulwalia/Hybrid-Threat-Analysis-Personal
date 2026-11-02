@@ -24,6 +24,8 @@ dist/
 *.csv
 MachineLearningCSV/
 MachineLearningCSV.zip
+GeneratedLabelledFlows.zip
+GeneratedLabelledFlows/
 
 # === Saved models & evaluation artifacts — versioned on disk, not in git ===
 models/*
