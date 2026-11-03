@@ -28,3 +28,4 @@ with open(manifest_v10, "a", encoding="utf-8") as f:
         f.write(e + "\n")
 
 print("Appended 5 entries to MANIFEST_sha256_v10.txt")
+

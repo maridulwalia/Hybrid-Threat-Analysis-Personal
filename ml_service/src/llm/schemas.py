@@ -73,3 +73,4 @@ class EvaluatedDecisionRecord(BaseModel):
     raw_response: Optional[str] = None
     validation_attempts: int = 1
     latency_ms: float = 0.0
+

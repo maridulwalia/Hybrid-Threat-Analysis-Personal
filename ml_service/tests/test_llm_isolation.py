@@ -50,3 +50,4 @@ def test_static_import_graph_isolation():
 if __name__ == "__main__":
     test_static_import_graph_isolation()
     print("ALL ISOLATION ASSERTIONS PASSED: Zero dependencies on ml_service.src.llm found in upstream phases!")
+

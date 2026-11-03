@@ -240,3 +240,4 @@ def build_evidence_bundle(
     bundle_dict["bundle_hash"] = bundle_hash
 
     return bundle_dict
+

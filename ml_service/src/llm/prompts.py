@@ -55,3 +55,4 @@ def build_user_prompt(bundle: Dict[str, Any]) -> str:
     )
 
     return "\n".join(lines)
+
