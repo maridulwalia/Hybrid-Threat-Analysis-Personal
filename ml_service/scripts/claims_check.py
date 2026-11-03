@@ -17,6 +17,7 @@ Verification Methodology:
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import math
@@ -28,6 +29,7 @@ from typing import Any, Dict, List, Tuple
 
 import numpy as np
 import pandas as pd
+import pyarrow.parquet as pq
 from sklearn.metrics import roc_auc_score
 
 _ROOT = Path(__file__).resolve().parent.parent.parent
@@ -648,6 +650,56 @@ def main() -> None:
     assert "0.4167" in rep_v4_txt, "Missing 0.4167 in report v4"
     assert "0.5526" in rep_v4_txt, "Missing 0.5526 in report v4"
     record_assertion("Report v4 Key Numbers Parity", True, "All headline numbers present in rag_evaluation_report_v4.md")
+
+    # -------------------------------------------------------------------------
+    # PART M: PHASE 11 GEMINI & DECISION SUPPORT VERIFICATION
+    # -------------------------------------------------------------------------
+    logger.info("\n--- Verifying Phase 11 Claims & Artifact Parity ---")
+    llm_dir = _ROOT / "artifacts" / "llm"
+    
+    # 1. ml_flags_v3 existence and shape
+    flags_v3_path = _ROOT / "artifacts" / "correlation" / "ml_flags_v3.parquet"
+    assert flags_v3_path.exists(), f"Missing {flags_v3_path}"
+    flags_v3_meta = pq.read_metadata(flags_v3_path)
+    check_approx(flags_v3_meta.num_rows, 2520798, 0, "ml_flags_v3 Total Rows")
+    check_approx(flags_v3_meta.num_columns, 8, 0, "ml_flags_v3 Column Count")
+
+    # 2. Pre-registration file & hash
+    prereg_p11_path = llm_dir / "preregistration_v1.md"
+    assert prereg_p11_path.exists(), f"Missing {prereg_p11_path}"
+    obs_p11_hash = hashlib.sha256(prereg_p11_path.read_bytes()).hexdigest()
+    assert obs_p11_hash == "17ea255adf3dd205ea5c4543daafb7830ba08db1518ef8ad29dd8ead1bcc033f", f"Hash mismatch: {obs_p11_hash}"
+    record_assertion("Phase 11 Pre-registration Hash Integrity", True, f"SHA-256 matches {obs_p11_hash[:16]}...")
+
+    # 3. Evaluation summary metrics
+    llm_summary_path = llm_dir / "llm_evaluation_summary_v1.json"
+    assert llm_summary_path.exists(), f"Missing {llm_summary_path}"
+    with open(llm_summary_path, "r", encoding="utf-8") as f:
+        llm_sum = json.load(f)
+
+    check_approx(llm_sum["sample_size"], 30, 0, "Phase 11 Sample Size")
+    check_approx(llm_sum["validator_first_pass_rate"], 1.0, 1e-4, "Phase 11 Validator First-Pass Rate")
+    check_approx(llm_sum["validator_final_pass_rate"], 1.0, 1e-4, "Phase 11 Validator Final Pass Rate")
+    check_approx(llm_sum["claim_grounding_rate"], 1.0, 1e-4, "Phase 11 Claim Grounding Rate")
+    check_approx(llm_sum["entity_hallucination_rate"], 0.0, 1e-4, "Phase 11 Entity Hallucination Rate")
+    check_approx(llm_sum["action_grounding_rate"], 1.0, 1e-4, "Phase 11 Action Grounding Rate")
+    check_approx(llm_sum["injection_tests"]["overall_injection_rejection_rate"], 1.0, 1e-4, "Phase 11 Injection Rejection Rate")
+
+    # 4. Blind review pairs count
+    blind_rev_path = llm_dir / "blind_review_v1.json"
+    assert blind_rev_path.exists(), f"Missing {blind_rev_path}"
+    with open(blind_rev_path, "r", encoding="utf-8") as f:
+        blind_data = json.load(f)
+    check_approx(len(blind_data["pairs"]), 10, 0, "Phase 11 Blind Review Pairs Count")
+
+    # 5. Report text parity
+    llm_rep_path = llm_dir / "llm_evaluation_report_v1.md"
+    assert llm_rep_path.exists(), f"Missing {llm_rep_path}"
+    llm_rep_txt = llm_rep_path.read_text(encoding="utf-8")
+    assert "100.0%" in llm_rep_txt, "Missing 100.0% in report"
+    assert "0.00%" in llm_rep_txt, "Missing 0.00% in report"
+    assert "17ea255adf3dd205ea5c4543daafb7830ba08db1518ef8ad29dd8ead1bcc033f" in llm_rep_txt, "Missing prereg hash in report"
+    record_assertion("Phase 11 Report Text Parity", True, "All headline metrics confirmed in llm_evaluation_report_v1.md")
 
     logger.info("\n" + "=" * 80)
     logger.info("ALL %d EMPIRICAL CLAIMS & TEXT-PARITY ASSERTIONS PASSED SUCCESSFULLY!", len(ASSERTION_LOG))
