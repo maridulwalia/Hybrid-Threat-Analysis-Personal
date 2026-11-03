@@ -479,6 +479,92 @@ def main() -> None:
     assert "0.4478" in tracker_txt, "Missing 0.4478 in tracker 5.5"
     record_assertion("Tracker Section 5.5 Parity", True, "All headline numbers present in RESEARCH_PAPER_TRACKER.md")
 
+    # 8. Closure Pass 2 Analysis Numbers (v3)
+    closure_v3_path = rag_dir / "closure_analyses_v3.json"
+    assert closure_v3_path.exists(), f"Missing {closure_v3_path}"
+    cv3 = json.loads(closure_v3_path.read_text(encoding="utf-8"))
+    
+    pe = cv3["partition_erratum"]
+    check_approx(pe["dev_total"], 40, 0, "Erratum Dev Total")
+    check_approx(pe["dev_threats"], 26, 0, "Erratum Dev Threats")
+    check_approx(pe["test_total"], 54, 0, "Erratum Test Total")
+    check_approx(pe["test_threats"], 38, 0, "Erratum Test Threats")
+    check_approx(pe["blind_reserved"], 15, 0, "Erratum Blind Reserved")
+    check_approx(pe["total_queries"], 109, 0, "Erratum Total Queries")
+    
+    sc = cv3["split_composition_divergence"]
+    check_approx(sc["dev"]["schema_count"], 5, 0, "Dev Schema Count")
+    check_approx(sc["dev"]["observable_count"], 14, 0, "Dev Observable Count")
+    check_approx(sc["test"]["schema_count"], 21, 0, "Test Schema Count")
+    check_approx(sc["test"]["observable_count"], 9, 0, "Test Observable Count")
+    
+    tg = cv3["token_capped_chunking_grids"]
+    check_approx(tg["tok128"]["chunk_count"], 4752, 0, "tok128 Chunk Count")
+    check_approx(tg["tok128"]["pct_over_256"], 0.0, 1e-4, "tok128 % Over 256")
+    check_approx(tg["tok128"]["dev_hits_r1"], 7, 0, "tok128 Dev Hits R@1")
+    check_approx(tg["tok128"]["dev_hits_r5"], 15, 0, "tok128 Dev Hits R@5")
+    check_approx(tg["tok128"]["dev_mrr"], 0.3891, 1e-4, "tok128 Dev MRR")
+    check_approx(tg["tok128"]["indexing_peak_rss_mb"], 881.44, 1e-2, "tok128 Indexing Peak RSS")
+    
+    check_approx(tg["tok256"]["chunk_count"], 2978, 0, "tok256 Chunk Count")
+    check_approx(tg["tok256"]["pct_over_256"], 0.0, 1e-4, "tok256 % Over 256")
+    check_approx(tg["tok256"]["dev_hits_r1"], 7, 0, "tok256 Dev Hits R@1")
+    check_approx(tg["tok256"]["dev_hits_r5"], 14, 0, "tok256 Dev Hits R@5")
+    check_approx(tg["tok256"]["dev_mrr"], 0.3718, 1e-4, "tok256 Dev MRR")
+    check_approx(tg["tok256"]["indexing_peak_rss_mb"], 1137.53, 1e-2, "tok256 Indexing Peak RSS")
+    
+    check_approx(tg["c512_frozen_baseline"]["dev_hits_r1"], 6, 0, "c512 Baseline Dev Hits R@1")
+    check_approx(tg["c512_frozen_baseline"]["dev_hits_r5"], 15, 0, "c512 Baseline Dev Hits R@5")
+    check_approx(tg["c512_frozen_baseline"]["dev_mrr"], 0.3635, 1e-4, "c512 Baseline Dev MRR")
+    
+    dma = cv3["dev_mapped_retrieval_audit"]
+    check_approx(dma["queries_bytes"], 32723, 0, "Queries v1 Bytes")
+    assert dma["queries_sha256"] == "72d0246f6e5348ffe8f94240726facc76ab12d1e5b126dc487df8bddfd2d19eb", "Queries SHA256 mismatch"
+    record_assertion("Queries v1 SHA256 Verification", True, "Hash verified identical")
+    
+    mod_a = dma["dev_audit_with_realistic_predicted_labels"]["mode_a_strict_serving_gate"]
+    check_approx(mod_a["hits_r1"], 19, 0, "Mode A Dev Hits R@1")
+    check_approx(mod_a["hits_r5"], 19, 0, "Mode A Dev Hits R@5")
+    check_approx(mod_a["mrr"], 0.7308, 1e-4, "Mode A Dev MRR")
+    
+    mod_b = dma["dev_audit_with_realistic_predicted_labels"]["mode_b_semantic_fallback"]
+    check_approx(mod_b["hits_r1"], 20, 0, "Mode B Dev Hits R@1")
+    check_approx(mod_b["hits_r5"], 21, 0, "Mode B Dev Hits R@5")
+    check_approx(mod_b["mrr"], 0.7885, 1e-4, "Mode B Dev MRR")
+    
+    fpm = cv3["fresh_process_memory_profiles"]
+    check_approx(fpm["a_ml_risk_scorer"]["peak_mb"], 163.57, 1e-2, "ML+Scorer Peak Working Set")
+    check_approx(fpm["b_ml_risk_chroma_metadata"]["peak_mb"], 221.10, 1e-2, "ML+Chroma Metadata Serving Peak Working Set")
+    check_approx(fpm["b_ml_risk_chroma_metadata"]["headroom_mb"], 278.90, 1e-2, "Chroma Metadata Serving 500MB Headroom")
+    assert fpm["b_ml_risk_chroma_metadata"]["within_500mb_budget"] is True, "Serving path should be within budget"
+    record_assertion("Zero-Embedding Serving Path within 500MB Budget", True, "Peak 221.10 MB <= 500 MB")
+    
+    check_approx(fpm["c_ml_risk_chroma_embedding"]["peak_mb"], 556.36, 1e-2, "Chroma Embedding Peak Working Set")
+    assert fpm["c_ml_risk_chroma_embedding"]["within_500mb_budget"] is False, "SentenceTransformers query embedding exceeds 500 MB"
+    record_assertion("Query Embedding Exceeds 500MB Budget", True, "Peak 556.36 MB > 500 MB")
+    
+    check_approx(fpm["d_ml_risk_shap_explainer"]["peak_mb"], 237.43, 1e-2, "SHAP Explainer Peak Working Set")
+    
+    ga = cv3["gate_analysis"]
+    check_approx(ga["tau_035_negative_admittance_pct"], 75.0, 1e-1, "Tau 0.35 Negative Admittance %")
+    check_approx(ga["tau_035_negative_admitted_count"], 12, 0, "Tau 0.35 Negative Admitted Count")
+    check_approx(ga["far_20_constrained_retained_threats_dev"], 4, 0, "FAR 0.20 Retained Threats on Dev")
+    
+    tmm = cv3["test_mrr_metrics"]
+    check_approx(tmm["chunk_level_test_mrr"], 0.4478, 1e-4, "Chunk-Level Test MRR")
+    check_approx(tmm["distinct_technique_duplicate_collapsed_mrr"], 0.4993, 1e-4, "Distinct-Technique Test MRR")
+    
+    report_v3_path = rag_dir / "rag_evaluation_report_v3.md"
+    assert report_v3_path.exists(), f"Missing {report_v3_path}"
+    rep_v3_txt = report_v3_path.read_text(encoding="utf-8")
+    assert "221.10" in rep_v3_txt, "Missing 221.10 in report v3"
+    assert "556.36" in rep_v3_txt, "Missing 556.36 in report v3"
+    assert "4,752" in rep_v3_txt, "Missing 4,752 in report v3"
+    assert "2,978" in rep_v3_txt, "Missing 2,978 in report v3"
+    assert "0.7308" in rep_v3_txt, "Missing 0.7308 in report v3"
+    assert "0.2692" in rep_v3_txt, "Missing 0.2692 in report v3"
+    record_assertion("Report v3 Key Numbers Parity", True, "All headline numbers present in rag_evaluation_report_v3.md")
+
     logger.info("\n" + "=" * 80)
     logger.info("ALL %d EMPIRICAL CLAIMS & TEXT-PARITY ASSERTIONS PASSED SUCCESSFULLY!", len(ASSERTION_LOG))
     logger.info("=" * 80)
