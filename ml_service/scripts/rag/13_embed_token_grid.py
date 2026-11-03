@@ -108,3 +108,4 @@ if __name__ == "__main__":
     parser.add_argument("--grid", required=True, choices=["tok128", "tok256"])
     args = parser.parse_args()
     embed_grid(args.grid)
+

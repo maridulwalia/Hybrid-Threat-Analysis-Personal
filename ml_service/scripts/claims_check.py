@@ -565,6 +565,90 @@ def main() -> None:
     assert "0.2692" in rep_v3_txt, "Missing 0.2692 in report v3"
     record_assertion("Report v3 Key Numbers Parity", True, "All headline numbers present in rag_evaluation_report_v3.md")
 
+    # 9. Closure Pass 3 Reconciled & Unified Serving Assertions (v4)
+    closure_v4_path = rag_dir / "closure_analyses_v4.json"
+    assert closure_v4_path.exists(), f"Missing {closure_v4_path}"
+    cv4 = json.loads(closure_v4_path.read_text(encoding="utf-8"))
+    
+    # Erratum v4 checks
+    pev4 = cv4["partition_erratum_v4"]
+    check_approx(pev4["blind_set_actual"]["threats"], 10, 0, "Blind Set Threats Actual")
+    check_approx(pev4["blind_set_actual"]["negatives"], 5, 0, "Blind Set Negatives Actual")
+    check_approx(pev4["blind_set_actual"]["total"], 15, 0, "Blind Set Total Actual")
+    
+    # MRR Reconciliation
+    mrr_rec = cv4["mrr_reconciliation_c512_dev"]
+    check_approx(mrr_rec["stage_b_mrr_top10"], 0.3811, 1e-4, "Reconciled Stage B MRR Top 10")
+    check_approx(mrr_rec["closure_pass2_mrr_top5"], 0.3635, 1e-4, "Reconciled Closure Pass 2 MRR Top 5")
+    check_approx(mrr_rec["delta"], 0.0176, 1e-4, "Reconciled MRR Delta")
+    check_approx(mrr_rec["recall_at_1_both_runs"], 0.2308, 1e-4, "Reconciled R@1 Both Runs")
+    check_approx(mrr_rec["recall_at_5_both_runs"], 0.5769, 1e-4, "Reconciled R@5 Both Runs")
+    
+    # Clean Evaluation Dev
+    dev_cl = cv4["oracle_audit_and_clean_evaluation"]["dev_clean_exploratory"]
+    check_approx(dev_cl["mapped_path_stated_queries_n12"]["recall_at_1"], 0.4167, 1e-4, "Clean Dev Mapped R@1")
+    check_approx(dev_cl["mapped_path_stated_queries_n12"]["mrr"], 0.4167, 1e-4, "Clean Dev Mapped MRR")
+    check_approx(dev_cl["unfiltered_semantic_observable_queries_n14"]["recall_at_1"], 0.1429, 1e-4, "Clean Dev Observable R@1")
+    check_approx(dev_cl["unfiltered_semantic_observable_queries_n14"]["recall_at_5"], 0.6429, 1e-4, "Clean Dev Observable R@5")
+    check_approx(dev_cl["unfiltered_semantic_observable_queries_n14"]["mrr"], 0.3179, 1e-4, "Clean Dev Observable MRR")
+    check_approx(dev_cl["end_to_end_pipeline_all_threats_n26"]["recall_at_1"], 0.2692, 1e-4, "Clean Dev Pipeline R@1")
+    check_approx(dev_cl["end_to_end_pipeline_all_threats_n26"]["recall_at_5"], 0.5385, 1e-4, "Clean Dev Pipeline R@5")
+    check_approx(dev_cl["end_to_end_pipeline_all_threats_n26"]["mrr"], 0.3635, 1e-4, "Clean Dev Pipeline MRR")
+    check_approx(dev_cl["realistic_label_lookup_baseline_n26"]["mrr"], 0.1923, 1e-4, "Clean Dev Lookup MRR")
+    
+    # Clean Evaluation Test
+    test_cl = cv4["oracle_audit_and_clean_evaluation"]["test_clean_descriptive"]
+    check_approx(test_cl["mapped_path_stated_queries_n29"]["recall_at_1"], 0.7241, 1e-4, "Clean Test Mapped R@1")
+    check_approx(test_cl["mapped_path_stated_queries_n29"]["mrr"], 0.7241, 1e-4, "Clean Test Mapped MRR")
+    check_approx(test_cl["unfiltered_semantic_observable_queries_n9"]["recall_at_1"], 0.2222, 1e-4, "Clean Test Observable R@1")
+    check_approx(test_cl["unfiltered_semantic_observable_queries_n9"]["recall_at_5"], 0.6667, 1e-4, "Clean Test Observable R@5")
+    check_approx(test_cl["unfiltered_semantic_observable_queries_n9"]["mrr"], 0.3926, 1e-4, "Clean Test Observable MRR")
+    check_approx(test_cl["end_to_end_pipeline_all_threats_n38"]["recall_at_1"], 0.6053, 1e-4, "Clean Test Pipeline R@1")
+    check_approx(test_cl["end_to_end_pipeline_all_threats_n38"]["recall_at_5"], 0.7105, 1e-4, "Clean Test Pipeline R@5")
+    check_approx(test_cl["end_to_end_pipeline_all_threats_n38"]["mrr"], 0.6456, 1e-4, "Clean Test Pipeline MRR")
+    check_approx(test_cl["realistic_label_lookup_baseline_n38"]["mrr"], 0.5526, 1e-4, "Clean Test Lookup MRR")
+    
+    # Unified Serving Profile
+    usp = cv4["unified_serving_process_profile"]
+    check_approx(usp["rss_before_request_mb"], 367.71, 1e-2, "Unified Process RSS Before")
+    check_approx(usp["rss_after_request_mb"], 384.84, 1e-2, "Unified Process RSS After")
+    check_approx(usp["delta_rss_mb"], 17.13, 1e-2, "Unified Process Delta RSS")
+    check_approx(usp["peak_working_set_mb"], 384.84, 1e-2, "Unified Process Peak Working Set")
+    check_approx(usp["request_latency_ms"], 135.21, 1e-1, "Unified Process Latency ms")
+    
+    # Render Headroom
+    rlh = usp["render_limits_and_headroom"]
+    check_approx(rlh["internal_safety_cap"]["headroom_mb"], 115.16, 1e-2, "Internal 500MB Headroom")
+    check_approx(rlh["render_free_tier"]["headroom_mb"], 127.16, 1e-2, "Render Free Tier Headroom")
+    check_approx(rlh["render_starter_tier"]["headroom_mb"], 127.16, 1e-2, "Render Starter Tier Headroom")
+    check_approx(rlh["render_standard_tier"]["headroom_mb"], 1663.16, 1e-2, "Render Standard Tier Headroom")
+    
+    # Build Time Exception
+    check_approx(cv4["build_time_memory_exception"]["sentence_transformer_model_init_rss_mb"], 504.73, 1e-2, "SentenceTransformer Init RSS")
+    
+    # Evaluation Policy File Parity
+    policy_path = rag_dir / "evaluation_policy_v1.md"
+    assert policy_path.exists(), f"Missing {policy_path}"
+    policy_txt = policy_path.read_text(encoding="utf-8")
+    assert "Immutability of Query Files" in policy_txt, "Missing Immutability in policy"
+    assert "Single Evaluation Protocol" in policy_txt, "Missing Single Evaluation in policy"
+    record_assertion("Evaluation Policy v1 Parity", True, "evaluation_policy_v1.md verified present")
+    
+    # Report v4 Text Parity
+    report_v4_path = rag_dir / "rag_evaluation_report_v4.md"
+    assert report_v4_path.exists(), f"Missing {report_v4_path}"
+    rep_v4_txt = report_v4_path.read_text(encoding="utf-8")
+    assert "384.84" in rep_v4_txt, "Missing 384.84 in report v4"
+    assert "367.71" in rep_v4_txt, "Missing 367.71 in report v4"
+    assert "135.21" in rep_v4_txt, "Missing 135.21 in report v4"
+    assert "0.3811" in rep_v4_txt, "Missing 0.3811 in report v4"
+    assert "0.3635" in rep_v4_txt, "Missing 0.3635 in report v4"
+    assert "0.6456" in rep_v4_txt, "Missing 0.6456 in report v4"
+    assert "0.7241" in rep_v4_txt, "Missing 0.7241 in report v4"
+    assert "0.4167" in rep_v4_txt, "Missing 0.4167 in report v4"
+    assert "0.5526" in rep_v4_txt, "Missing 0.5526 in report v4"
+    record_assertion("Report v4 Key Numbers Parity", True, "All headline numbers present in rag_evaluation_report_v4.md")
+
     logger.info("\n" + "=" * 80)
     logger.info("ALL %d EMPIRICAL CLAIMS & TEXT-PARITY ASSERTIONS PASSED SUCCESSFULLY!", len(ASSERTION_LOG))
     logger.info("=" * 80)

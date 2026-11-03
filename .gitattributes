@@ -1,0 +1,12 @@
+# Git Attributes for Hybrid Threat Analysis Decision Support System
+# Strictly prevents any EOL normalization or conversion on artifacts and provenance
+
+artifacts/** -text
+provenance/** -text
+*.parquet binary
+*.pkl binary
+*.npz binary
+*.pdf binary
+*.json text eol=lf
+*.md text eol=lf
+*.py text eol=lf
